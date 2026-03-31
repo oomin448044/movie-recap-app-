@@ -1,3 +1,10 @@
+import sys
+import types
+sys.modules['pyaudioop'] = types.ModuleType('pyaudioop')
+
+import streamlit as st
+# ... ကျန်တဲ့ code တွေ ဆက်ရှိပါစေ ...
+
 import streamlit as st
 import google.generativeai as genai
 import os
