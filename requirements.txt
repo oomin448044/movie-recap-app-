@@ -1,5 +1,6 @@
 streamlit
-google-generativeai
+google-generativeai>=0.7.0
 edge-tts
 pydub
 moviepy
+pytubefix
