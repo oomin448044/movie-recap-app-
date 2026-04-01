@@ -10,19 +10,20 @@ import asyncio
 import edge_tts
 import tempfile
 import time
-from moviepy import VideoFileClip, AudioFileClip
+from moviepy import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip
 from pytubefix import YouTube
 
 # Page configuration
-st.set_page_config(page_title="AI Burmese Movie Recap (YouTube & Video)", layout="wide")
+st.set_page_config(page_title="AI Burmese Movie Dubbing with Logo", layout="wide")
 
-st.title("🎬 AI Burmese Movie Recap")
-st.markdown("YouTube Link သို့မဟုတ် Video တင်လိုက်ရုံနဲ့ **မြန်မာနောက်ခံစကားပြောပါတဲ့ Video အသစ်** ကို အလိုအလျောက် ဖန်တီးပေးပါတယ်။")
+st.title("🎬 AI Burmese Movie Dubbing & Branding")
+st.markdown("YouTube Link သို့မဟုတ် Video တင်လိုက်ရုံနဲ့ **မြန်မာလို တိုက်ရိုက်ဘာသာပြန်** ပေးပြီး သင့်ရဲ့ **Channel Logo** ကိုပါ တစ်ခါတည်း ထည့်သွင်းပေးပါတယ်။")
 
-# Sidebar for API Key
+# Sidebar for Settings
 with st.sidebar:
     st.header("Settings")
     api_key = st.text_input("Enter Gemini API Key:", type="password")
+    logo_file = st.file_uploader("Upload Channel Logo (PNG/JPG):", type=["png", "jpg", "jpeg"])
     st.info("API Key မရှိသေးရင် VPN ဖွင့်ပြီး [Google AI Studio](https://aistudio.google.com/app/apikey) မှာ ယူပါ။")
 
 # Input Section
@@ -51,8 +52,8 @@ with tab2:
         st.video(video_path)
 
 if video_path and api_key:
-    if st.button("Generate Burmese Recap Video"):
-        with st.spinner("AI က Video ကို သေချာကြည့်ပြီး မြန်မာလို Recap Script ရေးနေပါတယ်..."):
+    if st.button("Generate Branded Dubbed Video"):
+        with st.spinner("AI က ဘာသာပြန်ပြီး Logo ထည့်သွင်းနေပါတယ်..."):
             try:
                 # 1. Configure AI and Find Model
                 genai.configure(api_key=api_key)
@@ -60,49 +61,68 @@ if video_path and api_key:
                 model_name = 'models/gemini-1.5-flash' if 'models/gemini-1.5-flash' in available_models else available_models[0]
                 model = genai.GenerativeModel(model_name)
                 
-                # 2. Upload Video to Gemini
+                # 2. Upload Video to Gemini for Analysis
                 video_file_ai = genai.upload_file(path=video_path)
                 while video_file_ai.state.name == "PROCESSING":
                     time.sleep(2)
                     video_file_ai = genai.get_file(video_file_ai.name)
                 
-                # 3. Generate Script
+                # 3. Generate Direct Translation Script (Strict Prompt)
                 prompt = """
-                Analyze this video carefully. 
-                Write a professional, exciting movie recap script in BURMESE language based ONLY on the events happening in this video.
+                Analyze this video and translate the original spoken dialogue into BURMESE language.
                 STRICT RULES:
-                1. Do NOT hallucinate. Only describe what is actually shown in the video.
-                2. Use an engaging, storytelling tone (Movie Recap Style).
-                3. Use natural, spoken Burmese (not formal book language).
-                4. Start with a hook and end with a summary.
-                5. Format the script for a male narrator.
+                1. ONLY translate what the characters are saying. 
+                2. Do NOT add any commentary, narrator notes, or "Movie Recap" style introductions.
+                3. Keep the translation concise so it matches the timing of the original speech.
+                4. Use natural, spoken Burmese.
+                5. Output ONLY the translated Burmese text.
                 """
                 response = model.generate_content([video_file_ai, prompt])
-                recap_script = response.text
+                dubbing_script = response.text
                 
-                st.subheader("Generated Script:")
-                st.write(recap_script)
+                st.subheader("Translated Burmese Script:")
+                st.write(dubbing_script)
                 
-                # 4. Generate Audio
+                # 4. Generate Audio (Voiceover)
                 voice = "my-MM-ThihaNeural"
-                communicate = edge_tts.Communicate(recap_script, voice)
+                communicate = edge_tts.Communicate(dubbing_script, voice)
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
                     asyncio.run(communicate.save(tmp_audio.name))
                     audio_path = tmp_audio.name
                 
-                # 5. Combine Video and Audio
+                # 5. Video Editing (Merging Audio & Adding Logo)
                 video_clip = VideoFileClip(video_path)
                 audio_clip = AudioFileClip(audio_path)
-                final_video = video_clip.with_audio(audio_clip)
                 
+                # Set new audio to the video
+                video_with_audio = video_clip.with_audio(audio_clip)
+                
+                # Add Logo if uploaded
+                if logo_file:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_logo:
+                        tmp_logo.write(logo_file.read())
+                        logo_path = tmp_logo.name
+                    
+                    # Create Logo Clip (Position: Top-Left, Size: Height 50px)
+                    logo = (ImageClip(logo_path)
+                            .with_duration(video_clip.duration)
+                            .resized(height=50) 
+                            .with_position(("left", "top"))
+                            .with_start(0))
+                    
+                    final_video = CompositeVideoClip([video_with_audio, logo])
+                else:
+                    final_video = video_with_audio
+                
+                # Save Final Video
                 output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
                 final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac")
                 
                 # 6. Display and Download
-                st.success("မြန်မာနောက်ခံစကားပြောပါတဲ့ Video အသစ် အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ!")
+                st.success("Logo ပါဝင်တဲ့ မြန်မာဘာသာပြန် Video အသစ် ရပါပြီ!")
                 st.video(output_video_path)
                 with open(output_video_path, "rb") as f:
-                    st.download_button("Download Final Video (MP4)", f, "my_movie_recap_final.mp4", "video/mp4")
+                    st.download_button("Download Branded Video (MP4)", f, "my_branded_movie.mp4", "video/mp4")
                 
                 # Cleanup
                 video_clip.close()
