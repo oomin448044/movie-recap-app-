@@ -9,13 +9,13 @@ import os
 import asyncio
 import edge_tts
 import tempfile
-from moviepy import VideoFileClip
+from moviepy import VideoFileClip, AudioFileClip
 
 # Page configuration
-st.set_page_config(page_title="Burmese Movie Recap AI", layout="wide")
+st.set_page_config(page_title="Burmese Movie Recap Video AI", layout="wide")
 
-st.title("🎬 Burmese Movie Recap AI")
-st.markdown("YouTube Transcript သို့မဟုတ် Video ကနေ စိတ်လှုပ်ရှားစရာကောင်းတဲ့ **မြန်မာယောကျာ်းသံ ဇာတ်ကြောင်းပြော Script** ဖန်တီးပေးပါတယ်။")
+st.title("🎬 Burmese Movie Recap Video AI")
+st.markdown("Video တင်လိုက်ရုံနဲ့ **မြန်မာနောက်ခံစကားပြောပါတဲ့ Video အသစ်** ကို အလိုအလျောက် ဖန်တီးပေးပါတယ်။")
 
 # Sidebar for API Key
 with st.sidebar:
@@ -23,84 +23,66 @@ with st.sidebar:
     api_key = st.text_input("Enter Gemini API Key:", type="password")
     st.info("API Key မရှိသေးရင် VPN ဖွင့်ပြီး [Google AI Studio](https://aistudio.google.com/app/apikey) မှာ ယူပါ။")
 
-if api_key:
-    try:
-        genai.configure(api_key=api_key)
-        # Updated model name to fix 404 error
-        model = genai.GenerativeModel('gemini-1.5-flash-latest')
-    except Exception as e:
-        st.error(f"Configuration Error: {e}")
-
 # Input Section
-tab1, tab2 = st.tabs(["YouTube Transcript", "Video Upload"])
+video_file = st.file_uploader("Upload Video (Max 500MB):", type=["mp4", "mov", "avi"])
 
-transcript_text = ""
-
-with tab1:
-    transcript_input = st.text_area("Paste YouTube Transcript here:", height=200)
-    if transcript_input:
-        transcript_text = transcript_input
-
-with tab2:
-    video_file = st.file_uploader("Upload Video (Max 500MB):", type=["mp4", "mov", "avi"])
-    if video_file:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_video:
-            tmp_video.write(video_file.read())
-            video_path = tmp_video.name
-        
-        with st.spinner("Extracting context from video..."):
+if video_file and api_key:
+    # Save uploaded video to a temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_video:
+        tmp_video.write(video_file.read())
+        video_path = tmp_video.name
+    
+    st.subheader("Original Video Preview:")
+    st.video(video_path)
+    
+    if st.button("Generate Burmese Recap Video"):
+        with st.spinner("AI က မြန်မာလို Recap Script ရေးပြီး Video နဲ့ အသံကို ပေါင်းစပ်နေပါတယ်..."):
             try:
-                transcript_text = f"This is a movie recap for the video file: {video_file.name}"
-                st.success("Video uploaded successfully!")
+                # 1. Configure AI
+                genai.configure(api_key=api_key)
+                model = genai.GenerativeModel('gemini-pro')
+                
+                # 2. Generate Script (Using filename as context)
+                prompt = f"Create a short, exciting movie recap script in BURMESE for a video titled: {video_file.name}. Use natural spoken Burmese for a male narrator. Make it engaging and storytelling style."
+                response = model.generate_content(prompt)
+                recap_script = response.text
+                
+                st.subheader("Generated Script:")
+                st.write(recap_script)
+                
+                # 3. Generate Audio (Voiceover)
+                voice = "my-MM-ThihaNeural"
+                communicate = edge_tts.Communicate(recap_script, voice)
+                
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
+                    asyncio.run(communicate.save(tmp_audio.name))
+                    audio_path = tmp_audio.name
+                
+                # 4. Combine Video and New Audio (Merging)
+                video_clip = VideoFileClip(video_path)
+                audio_clip = AudioFileClip(audio_path)
+                
+                # Set the new audio to the video clip
+                # If audio is longer than video, it will be cut. If shorter, video continues with no sound.
+                final_video = video_clip.with_audio(audio_clip)
+                
+                # Save the final merged video
+                output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
+                final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac")
+                
+                # 5. Display and Download the Merged Video
+                st.success("မြန်မာနောက်ခံစကားပြောပါတဲ့ Video အသစ် အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ!")
+                st.subheader("Final Recap Video (With Burmese Voiceover):")
+                st.video(output_video_path)
+                
+                with open(output_video_path, "rb") as f:
+                    st.download_button("Download Final Video (MP4)", f, "my_movie_recap_final.mp4", "video/mp4")
+                
+                # Cleanup
+                video_clip.close()
+                audio_clip.close()
+                
             except Exception as e:
                 st.error(f"Error: {e}")
-
-# AI Processing
-if st.button("Generate Movie Recap Script"):
-    if not api_key:
-        st.warning("Please enter your API Key in the sidebar.")
-    elif not transcript_text:
-        st.warning("Please provide a transcript or upload a video.")
-    else:
-        with st.spinner("AI က မြန်မာလို Recap Script ရေးပေးနေပါတယ်..."):
-            prompt = f"""
-            You are a professional Movie Recap Narrator. 
-            Rewrite the following transcript into an engaging, exciting, and storytelling Movie Recap Script in BURMESE language.
-            
-            STRICT RULES:
-            1. Use an exciting and storytelling tone (like popular movie recap channels).
-            2. Stay 100% faithful to the original genre. If it's a romance, make it romantic. If it's action, make it thrilling.
-            3. Do NOT hallucinate or change the story to a different genre.
-            4. Use natural, spoken Burmese (not formal book language).
-            5. Start with an engaging hook and end with a summary.
-            6. Format the script for a male narrator.
-            
-            Transcript: {transcript_text}
-            """
-            try:
-                response = model.generate_content(prompt)
-                st.session_state['recap_script'] = response.text
-                st.subheader("Generated Burmese Script:")
-                st.write(response.text)
-            except Exception as e:
-                st.error(f"AI Error: {e}. Try using 'gemini-pro' if this persists.")
-
-# Audio Generation
-if 'recap_script' in st.session_state:
-    if st.button("Generate Audio (Male Narrator Voiceover)"):
-        with st.spinner("မြန်မာယောကျာ်းသံ (Thiha) နဲ့ ဇာတ်ကြောင်းပြောနေပါတယ်..."):
-            try:
-                voice = "my-MM-ThihaNeural"
-                communicate = edge_tts.Communicate(st.session_state['recap_script'], voice)
-                
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_mp3:
-                    asyncio.run(communicate.save(tmp_mp3.name))
-                    mp3_path = tmp_mp3.name
-                
-                st.success("Audio generated successfully!")
-                st.audio(mp3_path, format="audio/mp3")
-                
-                with open(mp3_path, "rb") as f:
-                    st.download_button("Download Voiceover (MP3)", f, "movie_recap_male.mp3", "audio/mp3")
-            except Exception as e:
-                st.error(f"Audio Error: {e}")
+elif not api_key and video_file:
+    st.warning("Please enter your API Key in the sidebar.")
