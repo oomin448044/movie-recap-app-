@@ -40,9 +40,13 @@ if video_file and api_key:
             try:
                 # 1. Configure AI
                 genai.configure(api_key=api_key)
-                model = genai.GenerativeModel('gemini-pro')
                 
-                # 2. Generate Script (Using filename as context)
+                # Try to find an available model automatically
+                available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                model_name = 'models/gemini-1.5-flash' if 'models/gemini-1.5-flash' in available_models else available_models[0]
+                model = genai.GenerativeModel(model_name)
+                
+                # 2. Generate Script
                 prompt = f"Create a short, exciting movie recap script in BURMESE for a video titled: {video_file.name}. Use natural spoken Burmese for a male narrator. Make it engaging and storytelling style."
                 response = model.generate_content(prompt)
                 recap_script = response.text
@@ -58,21 +62,19 @@ if video_file and api_key:
                     asyncio.run(communicate.save(tmp_audio.name))
                     audio_path = tmp_audio.name
                 
-                # 4. Combine Video and New Audio (Merging)
+                # 4. Combine Video and New Audio
                 video_clip = VideoFileClip(video_path)
                 audio_clip = AudioFileClip(audio_path)
                 
                 # Set the new audio to the video clip
-                # If audio is longer than video, it will be cut. If shorter, video continues with no sound.
                 final_video = video_clip.with_audio(audio_clip)
                 
                 # Save the final merged video
                 output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
                 final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac")
                 
-                # 5. Display and Download the Merged Video
+                # 5. Display and Download
                 st.success("မြန်မာနောက်ခံစကားပြောပါတဲ့ Video အသစ် အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ!")
-                st.subheader("Final Recap Video (With Burmese Voiceover):")
                 st.video(output_video_path)
                 
                 with open(output_video_path, "rb") as f:
@@ -83,6 +85,6 @@ if video_file and api_key:
                 audio_clip.close()
                 
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Error: {e}. Please check if your API Key is correct and has access to Gemini models.")
 elif not api_key and video_file:
     st.warning("Please enter your API Key in the sidebar.")
