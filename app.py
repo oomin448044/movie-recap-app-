@@ -14,18 +14,22 @@ from moviepy import VideoFileClip
 # Page configuration
 st.set_page_config(page_title="Burmese Movie Recap AI", layout="wide")
 
-st.title("🎬 Burmese Movie Recap AI (Male Narrator)")
+st.title("🎬 Burmese Movie Recap AI")
 st.markdown("YouTube Transcript သို့မဟုတ် Video ကနေ စိတ်လှုပ်ရှားစရာကောင်းတဲ့ **မြန်မာယောကျာ်းသံ ဇာတ်ကြောင်းပြော Script** ဖန်တီးပေးပါတယ်။")
 
 # Sidebar for API Key
 with st.sidebar:
     st.header("Settings")
     api_key = st.text_input("Enter Gemini API Key:", type="password")
-    st.info("API Key မရှိသေးရင် [Google AI Studio](https://aistudio.google.com/app/apikey) မှာ ယူပါ။")
+    st.info("API Key မရှိသေးရင် VPN ဖွင့်ပြီး [Google AI Studio](https://aistudio.google.com/app/apikey) မှာ ယူပါ။")
 
 if api_key:
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    try:
+        genai.configure(api_key=api_key)
+        # Updated model name to fix 404 error
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    except Exception as e:
+        st.error(f"Configuration Error: {e}")
 
 # Input Section
 tab1, tab2 = st.tabs(["YouTube Transcript", "Video Upload"])
@@ -46,8 +50,6 @@ with tab2:
         
         with st.spinner("Extracting context from video..."):
             try:
-                # For context, we use the filename. 
-                # For full video analysis, Gemini 1.5 Pro would be needed.
                 transcript_text = f"This is a movie recap for the video file: {video_file.name}"
                 st.success("Video uploaded successfully!")
             except Exception as e:
@@ -61,7 +63,6 @@ if st.button("Generate Movie Recap Script"):
         st.warning("Please provide a transcript or upload a video.")
     else:
         with st.spinner("AI က မြန်မာလို Recap Script ရေးပေးနေပါတယ်..."):
-            # Improved prompt for better genre matching and storytelling
             prompt = f"""
             You are a professional Movie Recap Narrator. 
             Rewrite the following transcript into an engaging, exciting, and storytelling Movie Recap Script in BURMESE language.
@@ -82,14 +83,13 @@ if st.button("Generate Movie Recap Script"):
                 st.subheader("Generated Burmese Script:")
                 st.write(response.text)
             except Exception as e:
-                st.error(f"AI Error: {e}")
+                st.error(f"AI Error: {e}. Try using 'gemini-pro' if this persists.")
 
 # Audio Generation
 if 'recap_script' in st.session_state:
     if st.button("Generate Audio (Male Narrator Voiceover)"):
         with st.spinner("မြန်မာယောကျာ်းသံ (Thiha) နဲ့ ဇာတ်ကြောင်းပြောနေပါတယ်..."):
             try:
-                # Use Thiha (Male) voice for a more natural narration feel
                 voice = "my-MM-ThihaNeural"
                 communicate = edge_tts.Communicate(st.session_state['recap_script'], voice)
                 
