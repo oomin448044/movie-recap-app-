@@ -5,19 +5,19 @@ sys.modules['pyaudioop'] = types.ModuleType('pyaudioop')
 
 import streamlit as st
 import google.generativeai as genai
-from google.generativeai.types import SafetySettingDict, HarmCategory, HarmBlockThreshold
 import os
 import asyncio
 import edge_tts
 import tempfile
 import time
-from moviepy import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip
+import re
+from moviepy import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, concatenate_audioclips
 from pytubefix import YouTube
 
 # Page configuration
-st.set_page_config(page_title="AI Burmese Movie Narrator", layout="wide")
+st.set_page_config(page_title="AI Burmese Movie Narrator Pro", layout="wide")
 
-st.title("🎬 AI Burmese Movie Narrator")
+st.title("🎬 AI Burmese Movie Narrator Pro")
 st.markdown("Video ပြကွက်တွေနဲ့ **ကွက်တိကျပြီး စိတ်လှုပ်ရှားစရာကောင်းတဲ့ မြန်မာနောက်ခံစကားပြော** ကို ဖန်တီးပေးပါတယ်။")
 
 # Sidebar for Settings
@@ -52,6 +52,11 @@ with tab2:
             video_path = tmp_video.name
         st.video(video_path)
 
+async def generate_voiceover(text, output_path):
+    # Tuning for a more natural storytelling feel: rate -5% for clarity
+    communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural", rate="-5%", pitch="+0Hz")
+    await communicate.save(output_path)
+
 if video_path and api_key:
     if st.button("Generate Branded Narrated Video"):
         with st.spinner("AI က Video ကိုကြည့်ပြီး စိတ်လှုပ်ရှားစရာကောင်းတဲ့ ဇာတ်ကြောင်းပြောနေပါတယ်..."):
@@ -59,7 +64,6 @@ if video_path and api_key:
                 # 1. Configure AI
                 genai.configure(api_key=api_key)
                 
-                # Set Safety Settings to BLOCK_NONE to avoid PROHIBITED_CONTENT errors
                 safety_settings = [
                     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
                     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -77,71 +81,85 @@ if video_path and api_key:
                     time.sleep(2)
                     video_file_ai = genai.get_file(video_file_ai.name)
                 
-                # 3. Generate Engaging & Dramatic Script
+                # 3. Generate Script with Timestamps for Sync
                 prompt = """
-                Analyze this video carefully. 
-                Act as a professional Movie Recap Narrator. 
-                Tell the story of what is happening in this video in an EXCITING, DRAMATIC, and ENGAGING way in BURMESE language.
+                Analyze this video carefully. Act as a professional Movie Recap Narrator.
+                Tell the story of what is happening in an EXCITING, DRAMATIC, and ENGAGING way in BURMESE language.
                 
                 STRICT RULES:
-                1. NO introductions, NO greetings, NO commentary.
-                2. Use natural, spoken Burmese with emotional depth.
-                3. Do NOT be too brief or robotic. Make it sound like a real person telling a thrilling story.
-                4. Ensure the narration flows well and matches the timing of the actions in the video.
-                5. Output ONLY the Burmese storytelling text.
+                1. Use natural, spoken Burmese (Spoken Style).
+                2. NO introductions, NO greetings, NO commentary.
+                3. You MUST provide timestamps for each part of the story to match the video.
+                4. Format: [start_time - end_time] Story text
+                Example: [00:00 - 00:05] ဒီနေရာမှာတော့ ကျွန်တော်တို့ရဲ့ ဇာတ်လိုက်က...
+                5. Output ONLY the Burmese storytelling text with timestamps.
                 """
                 
                 response = model.generate_content([video_file_ai, prompt])
                 
-                # Check if response was blocked
                 if not response.candidates:
-                    st.error("AI က ဒီ Video ထဲက အကြောင်းအရာတချို့ကို ပိတ်ပင်ထားပါတယ် (Blocked)။ ကျေးဇူးပြု၍ အခြား Video တစ်ခုနဲ့ ပြန်စမ်းကြည့်ပေးပါခင်ဗျာ။")
+                    st.error("AI က ဒီ Video ကို ပိတ်ပင်ထားပါတယ် (Blocked)။")
                 else:
                     narrator_script = response.text
-                    st.subheader("Generated Script:")
+                    st.subheader("Generated Script with Timestamps:")
                     st.write(narrator_script)
                     
-                    # 4. Generate Audio
-                    voice = "my-MM-ThihaNeural"
-                    communicate = edge_tts.Communicate(narrator_script, voice, rate="+5%", pitch="+0Hz")
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
-                        asyncio.run(communicate.save(tmp_audio.name))
-                        audio_path = tmp_audio.name
-                    
-                    # 5. Video Editing
+                    # 4. Process Script and Generate Audio Clips
                     video_clip = VideoFileClip(video_path)
-                    audio_clip = AudioFileClip(audio_path)
+                    lines = narrator_script.strip().split('\n')
+                    audio_segments = []
                     
-                    if audio_clip.duration > video_clip.duration:
-                        audio_clip = audio_clip.subclipped(0, video_clip.duration)
+                    for line in lines:
+                        match = re.search(r'\[(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})\]\s*(.*)', line)
+                        if match:
+                            start_str, end_str, text = match.groups()
+                            start_sec = int(start_str.split(':')[0]) * 60 + int(start_str.split(':')[1])
+                            
+                            if text.strip():
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
+                                    asyncio.run(generate_voiceover(text, tmp_audio.name))
+                                    segment_audio = AudioFileClip(tmp_audio.name).with_start(start_sec)
+                                    audio_segments.append(segment_audio)
                     
-                    video_with_audio = video_clip.with_audio(audio_clip)
+                    # Combine all audio segments
+                    if audio_segments:
+                        final_audio = CompositeVideoClip([video_clip.with_audio(None)]).audio # Start with silent audio
+                        # Actually, let's just use CompositeAudioClip if available or overlay
+                        from moviepy import CompositeAudioClip
+                        final_audio = CompositeAudioClip(audio_segments)
+                        video_with_audio = video_clip.with_audio(final_audio)
+                    else:
+                        video_with_audio = video_clip
                     
+                    # 5. Add Logo (Fixed Layering)
                     if logo_file:
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_logo:
                             tmp_logo.write(logo_file.read())
                             logo_path = tmp_logo.name
+                        
                         logo = (ImageClip(logo_path)
                                 .with_duration(video_clip.duration)
-                                .resized(height=50) 
+                                .resized(height=60) # Slightly larger for visibility
                                 .with_position(("left", "top"))
                                 .with_start(0))
+                        
                         final_video = CompositeVideoClip([video_with_audio, logo])
                     else:
                         final_video = video_with_audio
                     
+                    # 6. Save Final Video
                     output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
                     final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac", temp_audiofile="temp-audio.m4a", remove_temp=True)
                     
-                    # 6. Display and Download
                     st.success("စိတ်လှုပ်ရှားစရာကောင်းတဲ့ ဇာတ်ကြောင်းပြော Video ရပါပြီ!")
                     st.video(output_video_path)
                     with open(output_video_path, "rb") as f:
-                        st.download_button("Download Final Video (MP4)", f, "my_movie_story.mp4", "video/mp4")
+                        st.download_button("Download Final Video (MP4)", f, "my_movie_pro.mp4", "video/mp4")
                     
                     # Cleanup
                     video_clip.close()
-                    audio_clip.close()
+                    if audio_segments:
+                        for seg in audio_segments: seg.close()
                 
                 genai.delete_file(video_file_ai.name)
                 
