@@ -11,7 +11,7 @@ import edge_tts
 import tempfile
 import time
 import re
-from moviepy import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, concatenate_audioclips
+from moviepy import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, CompositeAudioClip
 from pytubefix import YouTube
 
 # Page configuration
@@ -106,14 +106,20 @@ if video_path and api_key:
                     
                     # 4. Process Script and Generate Audio Clips
                     video_clip = VideoFileClip(video_path)
+                    # MUTE ORIGINAL AUDIO: Create a copy of the video without its original sound
+                    video_muted = video_clip.without_audio()
+                    
                     lines = narrator_script.strip().split('\n')
                     audio_segments = []
                     
                     for line in lines:
-                        match = re.search(r'\[(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})\]\s*(.*)', line)
+                        # Improved regex to handle various timestamp formats
+                        match = re.search(r'\[(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})\]\s*(.*)', line)
                         if match:
                             start_str, end_str, text = match.groups()
-                            start_sec = int(start_str.split(':')[0]) * 60 + int(start_str.split(':')[1])
+                            # Convert MM:SS to seconds
+                            start_parts = start_str.split(':')
+                            start_sec = int(start_parts[0]) * 60 + int(start_parts[1])
                             
                             if text.strip():
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
@@ -123,13 +129,10 @@ if video_path and api_key:
                     
                     # Combine all audio segments
                     if audio_segments:
-                        final_audio = CompositeVideoClip([video_clip.with_audio(None)]).audio # Start with silent audio
-                        # Actually, let's just use CompositeAudioClip if available or overlay
-                        from moviepy import CompositeAudioClip
                         final_audio = CompositeAudioClip(audio_segments)
-                        video_with_audio = video_clip.with_audio(final_audio)
+                        video_with_audio = video_muted.with_audio(final_audio)
                     else:
-                        video_with_audio = video_clip
+                        video_with_audio = video_muted
                     
                     # 5. Add Logo (Fixed Layering)
                     if logo_file:
@@ -139,7 +142,7 @@ if video_path and api_key:
                         
                         logo = (ImageClip(logo_path)
                                 .with_duration(video_clip.duration)
-                                .resized(height=60) # Slightly larger for visibility
+                                .resized(height=60) 
                                 .with_position(("left", "top"))
                                 .with_start(0))
                         
@@ -158,6 +161,7 @@ if video_path and api_key:
                     
                     # Cleanup
                     video_clip.close()
+                    video_muted.close()
                     if audio_segments:
                         for seg in audio_segments: seg.close()
                 
