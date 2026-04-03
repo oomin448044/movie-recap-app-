@@ -11,14 +11,13 @@ import edge_tts
 import tempfile
 import time
 import re
-import requests
-from moviepy import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, CompositeAudioClip, afx
+from moviepy import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, CompositeAudioClip
 from pytubefix import YouTube
 
 # Page configuration
-st.set_page_config(page_title="AI Burmese Movie Narrator Ultra", layout="wide")
+st.set_page_config(page_title="AI Burmese Movie Narrator Pro", layout="wide")
 
-st.title("🎬 AI Burmese Movie Narrator Ultra")
+st.title("🎬 AI Burmese Movie Narrator Pro")
 st.markdown("Video ပြကွက်တွေနဲ့ **ကွက်တိကျပြီး စိတ်လှုပ်ရှားစရာကောင်းတဲ့ မြန်မာနောက်ခံစကားပြော** ကို ဖန်တီးပေးပါတယ်။")
 
 # Sidebar for Settings
@@ -54,30 +53,17 @@ with tab2:
         st.video(video_path)
 
 async def generate_voiceover(text, output_path):
+    # Tuning for a more natural storytelling feel: rate -5% for clarity
     communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural", rate="-5%", pitch="+0Hz")
     await communicate.save(output_path)
-
-def get_bgm(genre):
-    bgm_links = {
-        "action": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-        "horror": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-        "drama": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
-        "default": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3"
-    }
-    url = bgm_links.get(genre.lower(), bgm_links["default"])
-    try:
-        r = requests.get(url, timeout=10)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
-            f.write(r.content)
-            return f.name
-    except:
-        return None
 
 if video_path and api_key:
     if st.button("Generate Branded Narrated Video"):
         with st.spinner("AI က Video ကိုကြည့်ပြီး စိတ်လှုပ်ရှားစရာကောင်းတဲ့ ဇာတ်ကြောင်းပြောနေပါတယ်..."):
             try:
+                # 1. Configure AI
                 genai.configure(api_key=api_key)
+                
                 safety_settings = [
                     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
                     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -89,11 +75,13 @@ if video_path and api_key:
                 model_name = 'models/gemini-1.5-flash' if 'models/gemini-1.5-flash' in available_models else available_models[0]
                 model = genai.GenerativeModel(model_name, safety_settings=safety_settings)
                 
+                # 2. Upload Video to Gemini
                 video_file_ai = genai.upload_file(path=video_path)
                 while video_file_ai.state.name == "PROCESSING":
                     time.sleep(2)
                     video_file_ai = genai.get_file(video_file_ai.name)
                 
+                # 3. Generate Script with Timestamps for Sync
                 prompt = """
                 Analyze this video carefully. Act as a professional Movie Recap Narrator.
                 Tell the story of what is happening in an EXCITING, DRAMATIC, and ENGAGING way in BURMESE language.
@@ -103,7 +91,7 @@ if video_path and api_key:
                 2. NO introductions, NO greetings, NO commentary.
                 3. You MUST provide timestamps for each part of the story to match the video.
                 4. Format: [start_time - end_time] Story text
-                5. Also, identify the GENRE of this video (Action, Horror, Drama, or Sci-Fi) at the very first line.
+                5. Output ONLY the Burmese storytelling text with timestamps.
                 """
                 
                 response = model.generate_content([video_file_ai, prompt])
@@ -115,15 +103,11 @@ if video_path and api_key:
                     st.subheader("Generated Script:")
                     st.write(narrator_script)
                     
-                    lines = narrator_script.strip().split('\n')
-                    genre = "default"
-                    if lines[0].startswith("GENRE:"):
-                        genre = lines[0].replace("GENRE:", "").strip()
-                        lines = lines[1:]
-                    
+                    # 4. Process Script and Generate Audio Clips
                     video_clip = VideoFileClip(video_path)
                     video_muted = video_clip.without_audio()
                     
+                    lines = narrator_script.strip().split('\n')
                     audio_segments = []
                     video_segments = []
                     current_time = 0
@@ -156,23 +140,15 @@ if video_path and api_key:
                                     audio_segments.append(voice_audio.with_start(current_time))
                                     current_time += final_scene.duration
                     
+                    # 5. Combine Video and Audio
                     if video_segments:
                         final_video_visual = concatenate_videoclips(video_segments)
-                        voice_audio_combined = CompositeAudioClip(audio_segments)
-                        
-                        bgm_path = get_bgm(genre)
-                        if bgm_path:
-                            bgm_audio = AudioFileClip(bgm_path).with_volume_scaled(0.15)
-                            # Correct way to loop audio in MoviePy v2.0+
-                            bgm_audio = afx.audio_loop(bgm_audio, duration=final_video_visual.duration)
-                            final_audio = CompositeAudioClip([voice_audio_combined, bgm_audio])
-                        else:
-                            final_audio = voice_audio_combined
-                            
+                        final_audio = CompositeAudioClip(audio_segments)
                         video_with_audio = final_video_visual.with_audio(final_audio)
                     else:
                         video_with_audio = video_muted
                     
+                    # 6. Add Logo
                     if logo_file:
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_logo:
                             tmp_logo.write(logo_file.read())
@@ -188,13 +164,14 @@ if video_path and api_key:
                     else:
                         final_video = video_with_audio
                     
+                    # 7. Save Final Video
                     output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
                     final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac", temp_audiofile="temp-audio.m4a", remove_temp=True)
                     
                     st.success("စိတ်လှုပ်ရှားစရာကောင်းတဲ့ ဇာတ်ကြောင်းပြော Video ရပါပြီ!")
                     st.video(output_video_path)
                     with open(output_video_path, "rb") as f:
-                        st.download_button("Download Final Video (MP4)", f, "my_movie_ultra.mp4", "video/mp4")
+                        st.download_button("Download Final Video (MP4)", f, "my_movie_pro.mp4", "video/mp4")
                     
                     video_clip.close()
                     video_muted.close()
