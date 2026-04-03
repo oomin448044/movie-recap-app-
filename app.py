@@ -53,15 +53,13 @@ with tab2:
         st.video(video_path)
 
 async def generate_voiceover(text, output_path):
-    # Tuning for a more natural storytelling feel: rate -5% for clarity
     communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural", rate="-5%", pitch="+0Hz")
     await communicate.save(output_path)
 
 if video_path and api_key:
     if st.button("Generate Branded Narrated Video"):
-        with st.spinner("AI က Video ကိုကြည့်ပြီး စိတ်လှုပ်ရှားစရာကောင်းတဲ့ ဇာတ်ကြောင်းပြောနေပါတယ်..."):
+        with st.spinner("AI က Video ကိုကြည့်ပြီး ဇာတ်ကြောင်းပြောခြင်းနှင့် ဇာတ်ကားအကြံပြုချက်များ ထုတ်ပေးနေပါတယ်..."):
             try:
-                # 1. Configure AI
                 genai.configure(api_key=api_key)
                 
                 safety_settings = [
@@ -75,23 +73,23 @@ if video_path and api_key:
                 model_name = 'models/gemini-1.5-flash' if 'models/gemini-1.5-flash' in available_models else available_models[0]
                 model = genai.GenerativeModel(model_name, safety_settings=safety_settings)
                 
-                # 2. Upload Video to Gemini
                 video_file_ai = genai.upload_file(path=video_path)
                 while video_file_ai.state.name == "PROCESSING":
                     time.sleep(2)
                     video_file_ai = genai.get_file(video_file_ai.name)
                 
-                # 3. Generate Script with Timestamps for Sync
                 prompt = """
                 Analyze this video carefully. Act as a professional Movie Recap Narrator.
-                Tell the story of what is happening in an EXCITING, DRAMATIC, and ENGAGING way in BURMESE language.
                 
-                STRICT RULES:
-                1. Use natural, spoken Burmese (Spoken Style).
-                2. NO introductions, NO greetings, NO commentary.
-                3. You MUST provide timestamps for each part of the story to match the video.
-                4. Format: [start_time - end_time] Story text
-                5. Output ONLY the Burmese storytelling text with timestamps.
+                PART 1: STORYTELLING
+                Tell the story of what is happening in an EXCITING, DRAMATIC, and ENGAGING way in BURMESE language.
+                - Use natural, spoken Burmese.
+                - NO introductions, NO greetings, NO commentary.
+                - Format: [start_time - end_time] Story text
+                
+                PART 2: RECOMMENDATIONS
+                Suggest ONLY the titles of 3 similar movies that viewers might like.
+                - Format: MOVIE_NAME: [Movie Title Only]
                 """
                 
                 response = model.generate_content([video_file_ai, prompt])
@@ -99,11 +97,23 @@ if video_path and api_key:
                 if not response.candidates:
                     st.error("AI က ဒီ Video ကို ပိတ်ပင်ထားပါတယ် (Blocked)။")
                 else:
-                    narrator_script = response.text
+                    full_text = response.text
+                    
+                    # Split Story and Recommendations
+                    parts = full_text.split("MOVIE_NAME:")
+                    narrator_script = parts[0].strip()
+                    movie_titles = [p.strip().split('\n')[0] for p in parts[1:]]
+                    
                     st.subheader("Generated Script:")
                     st.write(narrator_script)
                     
-                    # 4. Process Script and Generate Audio Clips
+                    # Display Movie Titles in a Copyable Box
+                    if movie_titles:
+                        st.subheader("🎬 Recommended Movie Titles:")
+                        titles_text = "\n".join([f"{i+1}. {title}" for i, title in enumerate(movie_titles[:3])])
+                        st.code(titles_text, language="text")
+                    
+                    # Process Video
                     video_clip = VideoFileClip(video_path)
                     video_muted = video_clip.without_audio()
                     
@@ -140,7 +150,6 @@ if video_path and api_key:
                                     audio_segments.append(voice_audio.with_start(current_time))
                                     current_time += final_scene.duration
                     
-                    # 5. Combine Video and Audio
                     if video_segments:
                         final_video_visual = concatenate_videoclips(video_segments)
                         final_audio = CompositeAudioClip(audio_segments)
@@ -148,7 +157,6 @@ if video_path and api_key:
                     else:
                         video_with_audio = video_muted
                     
-                    # 6. Add Logo
                     if logo_file:
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_logo:
                             tmp_logo.write(logo_file.read())
@@ -164,11 +172,10 @@ if video_path and api_key:
                     else:
                         final_video = video_with_audio
                     
-                    # 7. Save Final Video
                     output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
                     final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac", temp_audiofile="temp-audio.m4a", remove_temp=True)
                     
-                    st.success("စိတ်လှုပ်ရှားစရာကောင်းတဲ့ ဇာတ်ကြောင်းပြော Video ရပါပြီ!")
+                    st.success("Video Processing Complete!")
                     st.video(output_video_path)
                     with open(output_video_path, "rb") as f:
                         st.download_button("Download Final Video (MP4)", f, "my_movie_pro.mp4", "video/mp4")
