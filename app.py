@@ -12,7 +12,7 @@ import tempfile
 import time
 import re
 import requests
-from moviepy import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, CompositeAudioClip
+from moviepy import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, CompositeAudioClip, afx
 from pytubefix import YouTube
 
 # Page configuration
@@ -162,7 +162,9 @@ if video_path and api_key:
                         
                         bgm_path = get_bgm(genre)
                         if bgm_path:
-                            bgm_audio = AudioFileClip(bgm_path).with_volume_scaled(0.15).looped(duration=final_video_visual.duration)
+                            bgm_audio = AudioFileClip(bgm_path).with_volume_scaled(0.15)
+                            # Correct way to loop audio in MoviePy v2.0+
+                            bgm_audio = afx.audio_loop(bgm_audio, duration=final_video_visual.duration)
                             final_audio = CompositeAudioClip([voice_audio_combined, bgm_audio])
                         else:
                             final_audio = voice_audio_combined
@@ -171,7 +173,6 @@ if video_path and api_key:
                     else:
                         video_with_audio = video_muted
                     
-                    # LOGO FIX: Ensure logo is on top
                     if logo_file:
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_logo:
                             tmp_logo.write(logo_file.read())
@@ -179,8 +180,8 @@ if video_path and api_key:
                         
                         logo = (ImageClip(logo_path)
                                 .with_duration(video_with_audio.duration)
-                                .resized(height=video_with_audio.h // 8) # Auto-resize based on video height
-                                .with_position((20, 20)) # 20px margin from top-left
+                                .resized(height=video_with_audio.h // 8)
+                                .with_position((20, 20))
                                 .with_start(0))
                         
                         final_video = CompositeVideoClip([video_with_audio, logo])
