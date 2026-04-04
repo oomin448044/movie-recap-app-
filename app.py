@@ -38,7 +38,7 @@ with tab1:
         with st.spinner("Downloading YouTube video..."):
             try:
                 yt = YouTube(youtube_url)
-                stream = yt.streams.filter(progressive=True, file_extension=\'mp4\').first()
+                stream = yt.streams.filter(progressive=True, file_extension='mp4').first()
                 video_path = stream.download(output_path=tempfile.gettempdir())
                 st.video(video_path)
             except Exception as e:
@@ -69,8 +69,8 @@ if video_path and api_key:
                     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
                 ]
                 
-                available_models = [m.name for m in genai.list_models() if \'generateContent\' in m.supported_generation_methods]
-                model_name = \'models/gemini-1.5-flash\' if \'models/gemini-1.5-flash\' in available_models else available_models[0]
+                available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                model_name = 'models/gemini-1.5-flash' if 'models/gemini-1.5-flash' in available_models else available_models[0]
                 model = genai.GenerativeModel(model_name, safety_settings=safety_settings)
                 
                 video_file_ai = genai.upload_file(path=video_path)
@@ -114,7 +114,7 @@ if video_path and api_key:
                     movie_titles = []
                     
                     # Split by section markers
-                    lines = full_text.split(\'\n\')
+                    lines = full_text.split('\n')
                     current_section = "STORYTELLING"
                     
                     for line in lines:
@@ -167,18 +167,18 @@ if video_path and api_key:
                     video_duration = video_clip.duration
                     video_muted = video_clip.without_audio()
                     
-                    # Extract only the narrator script part (before TITLE: appears)
-                    script_lines = narrator_script.strip().split(\'\n\')
+                    # Extract only the narrator script part
+                    script_lines = narrator_script.strip().split('\n')
                     audio_segments = []
                     video_segments = []
                     current_time = 0
                     
                     for line in script_lines:
-                        match = re.search(r\'\\[(\\d{1,2}:\\d{2})\\s*-\\s*(\\d{1,2}:\\d{2})\\]\\s*(.*)\\' , line)
+                        match = re.search(r'\[(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})\]\s*(.*)', line)
                         if match:
                             start_str, end_str, text = match.groups()
-                            start_sec = int(start_str.split(\':\')[0]) * 60 + int(start_str.split(\':\')[1])
-                            end_sec = int(end_str.split(\':\')[0]) * 60 + int(end_str.split(\':\')[1])
+                            start_sec = int(start_str.split(':')[0]) * 60 + int(start_str.split(':')[1])
+                            end_sec = int(end_str.split(':')[0]) * 60 + int(end_str.split(':')[1])
                             
                             # Cap end_sec to video duration to prevent error
                             end_sec = min(end_sec, video_duration)
