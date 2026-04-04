@@ -229,7 +229,8 @@ if video_path and api_key:
                         final_video = video_with_audio
                     
                     output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
-                    final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac", temp_audiofile="temp-audio.m4a", remove_temp=True, verbose=False, logger=None)
+                    # Removed 'verbose' and 'logger' for MoviePy v2.0+ compatibility
+                    final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac", temp_audiofile="temp-audio.m4a", remove_temp=True)
                     
                     st.success("✅ Video Processing Complete!")
                     st.video(output_video_path)
