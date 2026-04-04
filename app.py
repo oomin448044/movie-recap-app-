@@ -1,7 +1,7 @@
 import sys
 import types
 # Fix for pydub error in Streamlit Cloud
-sys.modules['pyaudioop'] = types.ModuleType('pyaudioop')
+sys.modules["pyaudioop"] = types.ModuleType("pyaudioop")
 
 import streamlit as st
 import google.generativeai as genai
@@ -11,7 +11,7 @@ import edge_tts
 import tempfile
 import time
 import re
-from moviepy import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, CompositeAudioClip
+from moviepy import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, CompositeAudioClip, concatenate_videoclips
 from pytubefix import YouTube
 
 # Page configuration
@@ -38,7 +38,7 @@ with tab1:
         with st.spinner("Downloading YouTube video..."):
             try:
                 yt = YouTube(youtube_url)
-                stream = yt.streams.filter(progressive=True, file_extension='mp4').first()
+                stream = yt.streams.filter(progressive=True, file_extension=\'mp4\').first()
                 video_path = stream.download(output_path=tempfile.gettempdir())
                 st.video(video_path)
             except Exception as e:
@@ -53,15 +53,13 @@ with tab2:
         st.video(video_path)
 
 async def generate_voiceover(text, output_path):
-    # Tuning for a more natural storytelling feel: rate -5% for clarity
     communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural", rate="-5%", pitch="+0Hz")
     await communicate.save(output_path)
 
 if video_path and api_key:
     if st.button("Generate Branded Narrated Video"):
-        with st.spinner("AI က Video ကိုကြည့်ပြီး စိတ်လှုပ်ရှားစရာကောင်းတဲ့ ဇာတ်ကြောင်းပြောနေပါတယ်..."):
+        with st.spinner("AI က Video ကိုကြည့်ပြီး ဇာတ်ကြောင်းပြောခြင်းနှင့် အကြံပြုချက်များ ထုတ်ပေးနေပါတယ်..."):
             try:
-                # 1. Configure AI
                 genai.configure(api_key=api_key)
                 
                 safety_settings = [
@@ -71,27 +69,35 @@ if video_path and api_key:
                     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
                 ]
                 
-                available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-                model_name = 'models/gemini-1.5-flash' if 'models/gemini-1.5-flash' in available_models else available_models[0]
+                available_models = [m.name for m in genai.list_models() if \'generateContent\' in m.supported_generation_methods]
+                model_name = \'models/gemini-1.5-flash\' if \'models/gemini-1.5-flash\' in available_models else available_models[0]
                 model = genai.GenerativeModel(model_name, safety_settings=safety_settings)
                 
-                # 2. Upload Video to Gemini
                 video_file_ai = genai.upload_file(path=video_path)
                 while video_file_ai.state.name == "PROCESSING":
                     time.sleep(2)
                     video_file_ai = genai.get_file(video_file_ai.name)
                 
-                # 3. Generate Script with Timestamps for Sync
                 prompt = """
                 Analyze this video carefully. Act as a professional Movie Recap Narrator.
-                Tell the story of what is happening in an EXCITING, DRAMATIC, and ENGAGING way in BURMESE language.
                 
-                STRICT RULES:
-                1. Use natural, spoken Burmese (Spoken Style).
-                2. NO introductions, NO greetings, NO commentary.
-                3. You MUST provide timestamps for each part of the story to match the video.
-                4. Format: [start_time - end_time] Story text
-                5. Output ONLY the Burmese storytelling text with timestamps.
+                PART 1: STORYTELLING
+                Tell the story of what is happening in an EXCITING, DRAMATIC, and ENGAGING way in BURMESE language.
+                - Use natural, spoken Burmese.
+                - NO introductions, NO greetings, NO commentary.
+                - Format: [start_time - end_time] Story text
+                
+                PART 2: CATCHY TITLES
+                Suggest ONLY 3 catchy, clickbait-style titles in Burmese that would attract viewers on platforms like TikTok or Facebook. These titles should be relevant to the video content.
+                - Format: TITLE: [Catchy Burmese Title]
+                
+                PART 3: TRENDING HASHTAGS
+                Suggest ONLY 3 trending hashtags relevant to the video content, suitable for platforms like TikTok. These can be a mix of Burmese and English.
+                - Format: HASHTAG: [Trending Hashtag]
+                
+                PART 4: MOVIE RECOMMENDATIONS
+                Suggest ONLY the titles of 3 similar movies that viewers might like.
+                - Format: MOVIE_NAME: [Movie Title Only]
                 """
                 
                 response = model.generate_content([video_file_ai, prompt])
@@ -99,27 +105,87 @@ if video_path and api_key:
                 if not response.candidates:
                     st.error("AI က ဒီ Video ကို ပိတ်ပင်ထားပါတယ် (Blocked)။")
                 else:
-                    narrator_script = response.text
-                    st.subheader("Generated Script:")
-                    st.write(narrator_script)
+                    full_text = response.text
                     
-                    # 4. Process Script and Generate Audio Clips
+                    # Parse the response into sections
+                    narrator_script = ""
+                    catchy_titles = []
+                    trending_hashtags = []
+                    movie_titles = []
+                    
+                    # Split by section markers
+                    lines = full_text.split(\'\n\')
+                    current_section = "STORYTELLING"
+                    
+                    for line in lines:
+                        if "PART 2:" in line or "CATCHY TITLES" in line:
+                            current_section = "TITLES"
+                        elif "PART 3:" in line or "TRENDING HASHTAGS" in line:
+                            current_section = "HASHTAGS"
+                        elif "PART 4:" in line or "MOVIE RECOMMENDATIONS" in line:
+                            current_section = "MOVIES"
+                        elif line.strip():
+                            if current_section == "STORYTELLING" and not line.startswith("TITLE:") and not line.startswith("HASHTAG:") and not line.startswith("MOVIE_NAME:"):
+                                narrator_script += line + "\n"
+                            elif current_section == "TITLES" and line.startswith("TITLE:"):
+                                title = line.replace("TITLE:", "").strip()
+                                if title:
+                                    catchy_titles.append(title)
+                            elif current_section == "HASHTAGS" and line.startswith("HASHTAG:"):
+                                hashtag = line.replace("HASHTAG:", "").strip()
+                                if hashtag:
+                                    trending_hashtags.append(hashtag)
+                            elif current_section == "MOVIES" and line.startswith("MOVIE_NAME:"):
+                                movie = line.replace("MOVIE_NAME:", "").strip()
+                                if movie:
+                                    movie_titles.append(movie)
+                    
+                    # Display sections
+                    st.subheader("📖 Generated Script:")
+                    st.write(narrator_script.strip())
+                    
+                    # Display Catchy Titles
+                    if catchy_titles:
+                        st.subheader("🎯 Catchy Titles for Social Media:")
+                        titles_text = "\n".join([f"{i+1}. {title}" for i, title in enumerate(catchy_titles[:3])])
+                        st.code(titles_text, language="text")
+                    
+                    # Display Trending Hashtags
+                    if trending_hashtags:
+                        st.subheader("📱 Trending Hashtags:")
+                        hashtags_text = "\n".join([f"{i+1}. {tag}" for i, tag in enumerate(trending_hashtags[:3])])
+                        st.code(hashtags_text, language="text")
+                    
+                    # Display Movie Recommendations
+                    if movie_titles:
+                        st.subheader("🎬 Recommended Movies:")
+                        movies_text = "\n".join([f"{i+1}. {movie}" for i, movie in enumerate(movie_titles[:3])])
+                        st.code(movies_text, language="text")
+                    
+                    # Process Video
                     video_clip = VideoFileClip(video_path)
+                    video_duration = video_clip.duration
                     video_muted = video_clip.without_audio()
                     
-                    lines = narrator_script.strip().split('\n')
+                    # Extract only the narrator script part (before TITLE: appears)
+                    script_lines = narrator_script.strip().split(\'\n\')
                     audio_segments = []
                     video_segments = []
                     current_time = 0
                     
-                    from moviepy import concatenate_videoclips
-                    
-                    for line in lines:
-                        match = re.search(r'\[(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})\]\s*(.*)', line)
+                    for line in script_lines:
+                        match = re.search(r\'\\[(\\d{1,2}:\\d{2})\\s*-\\s*(\\d{1,2}:\\d{2})\\]\\s*(.*)\\' , line)
                         if match:
                             start_str, end_str, text = match.groups()
-                            start_sec = int(start_str.split(':')[0]) * 60 + int(start_str.split(':')[1])
-                            end_sec = int(end_str.split(':')[0]) * 60 + int(end_str.split(':')[1])
+                            start_sec = int(start_str.split(\':\')[0]) * 60 + int(start_str.split(\':\')[1])
+                            end_sec = int(end_str.split(\':\')[0]) * 60 + int(end_str.split(\':\')[1])
+                            
+                            # Cap end_sec to video duration to prevent error
+                            end_sec = min(end_sec, video_duration)
+                            
+                            # Ensure start_sec is also within bounds
+                            if start_sec >= video_duration:
+                                continue
                             
                             if text.strip():
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
@@ -140,7 +206,6 @@ if video_path and api_key:
                                     audio_segments.append(voice_audio.with_start(current_time))
                                     current_time += final_scene.duration
                     
-                    # 5. Combine Video and Audio
                     if video_segments:
                         final_video_visual = concatenate_videoclips(video_segments)
                         final_audio = CompositeAudioClip(audio_segments)
@@ -148,7 +213,6 @@ if video_path and api_key:
                     else:
                         video_with_audio = video_muted
                     
-                    # 6. Add Logo
                     if logo_file:
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_logo:
                             tmp_logo.write(logo_file.read())
@@ -164,14 +228,13 @@ if video_path and api_key:
                     else:
                         final_video = video_with_audio
                     
-                    # 7. Save Final Video
                     output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
-                    final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac", temp_audiofile="temp-audio.m4a", remove_temp=True)
+                    final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac", temp_audiofile="temp-audio.m4a", remove_temp=True, verbose=False, logger=None)
                     
-                    st.success("စိတ်လှုပ်ရှားစရာကောင်းတဲ့ ဇာတ်ကြောင်းပြော Video ရပါပြီ!")
+                    st.success("✅ Video Processing Complete!")
                     st.video(output_video_path)
                     with open(output_video_path, "rb") as f:
-                        st.download_button("Download Final Video (MP4)", f, "my_movie_pro.mp4", "video/mp4")
+                        st.download_button("⬇️ Download Final Video (MP4)", f, "my_movie_recap.mp4", "video/mp4")
                     
                     video_clip.close()
                     video_muted.close()
@@ -179,6 +242,8 @@ if video_path and api_key:
                 genai.delete_file(video_file_ai.name)
                 
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"❌ Error: {str(e)}")
+                import traceback
+                st.error(traceback.format_exc())
 elif not api_key and video_path:
-    st.warning("Please enter your API Key in the sidebar.")
+    st.warning("⚠️ Please enter your API Key in the sidebar.")
