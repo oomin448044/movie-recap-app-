@@ -25,7 +25,7 @@ with st.sidebar:
     api_key = st.text_input("Enter Gemini API Key:", type="password")
     st.info("API Key မရှိသေးရင် VPN ဖွင့်ပြီး [Google AI Studio](https://aistudio.google.com/app/apikey) မှာ ယူပါ။")
 
-# Input Section - Video Upload ONLY (YouTube Link Removed)
+# Input Section - Video Upload ONLY
 st.subheader("📁 Upload Video")
 video_file = st.file_uploader("Upload Video (Max 500MB):", type=["mp4", "mov", "avi"])
 
