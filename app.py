@@ -11,7 +11,7 @@ import edge_tts
 import tempfile
 import time
 import re
-from moviepy import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, CompositeAudioClip, concatenate_videoclips
+from moviepy import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips
 
 # Page configuration
 st.set_page_config(page_title="Web (1): AI Burmese Movie Narrator Pro", layout="wide")
@@ -113,7 +113,7 @@ if video_path and api_key:
                     audio_path = "narration.mp3"
                     asyncio.run(generate_speech(recap_text, audio_path))
                     
-                    # Process Video
+                    # Process Video with MoviePy v2.0+ syntax
                     video_clip = VideoFileClip(video_path)
                     audio_clip = AudioFileClip(audio_path)
                     
@@ -131,8 +131,8 @@ if video_path and api_key:
                     final_video = video_final.with_audio(audio_clip)
                     
                     output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
-                    # MoviePy v2.0+ fix: remove verbose and logger
-                    final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac", temp_audiofile="temp-audio.m4a", remove_temp=True)
+                    # MoviePy v2.0+ write_videofile syntax
+                    final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac")
                     
                     st.success("✅ Video Processing Complete!")
                     st.video(output_video_path)
@@ -141,6 +141,7 @@ if video_path and api_key:
                     
                     video_clip.close()
                     video_muted.close()
+                    audio_clip.close()
                 
                 genai.delete_file(video_file_ai.name)
                 
