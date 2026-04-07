@@ -22,7 +22,7 @@ st.markdown("Video ကိုကြည့်ပြီး လူတစ်ယော
 # Sidebar for Settings
 with st.sidebar:
     st.header("Settings")
-    api_key = st.text_input("Enter Gemini API Key:", type="password", value="AIzaSyCTBwmqUtpeWly0DtvV_swwBxrKBRRwEJk")
+    api_key = st.text_input("Enter Gemini API Key:", type="password")
     st.info("API Key မရှိသေးရင် VPN ဖွင့်ပြီး [Google AI Studio](https://aistudio.google.com/app/apikey) မှာ ယူပါ။")
 
 # Input Section - Video Upload ONLY
@@ -106,8 +106,9 @@ if video_path and api_key:
                     st.error("AI က ဒီ Video ကို ပိတ်ပင်ထားပါတယ် (Blocked)။")
                 else:
                     full_text = response.text
-                    titles_match = re.search(r\"\\[TITLES\\]\\n(.*?)\\n(.*?)\\n(.*?)\\n\", full_text + "\n\n\n", re.DOTALL)
-                    hashtags_match = re.search(r\"\\[HASHTAGS\\]\\n(.*?)\\n\", full_text)
+                    # Corrected regex for titles_match and hashtags_match
+                    titles_match = re.search(r'\[TITLES\]\n(.*?)\n(.*?)\n(.*?)\n', full_text + "\n\n\n", re.DOTALL)
+                    hashtags_match = re.search(r'\[HASHTAGS\]\n(.*?)\n', full_text)
                     recap_text = full_text.split("[RECAP]")[-1].strip()
                     
                     st.success("✨ Social Media Ready Content!")
