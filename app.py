@@ -54,6 +54,7 @@ if video_path and api_key:
                     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
                 ]
                 
+                # FIXED MODEL NAME: Removed 'models/' prefix to fix 404 error
                 model = genai.GenerativeModel('gemini-1.5-flash', safety_settings=safety_settings)
                 
                 video_file_ai = genai.upload_file(path=video_path)
@@ -113,7 +114,7 @@ if video_path and api_key:
                     audio_path = "narration.mp3"
                     asyncio.run(generate_speech(recap_text, audio_path))
                     
-                    # Process Video with MoviePy v2.0+ syntax
+                    # Process Video
                     video_clip = VideoFileClip(video_path)
                     audio_clip = AudioFileClip(audio_path)
                     
@@ -131,7 +132,7 @@ if video_path and api_key:
                     final_video = video_final.with_audio(audio_clip)
                     
                     output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
-                    # MoviePy v2.0+ write_videofile syntax
+                    # MoviePy v2.0+ fix: remove verbose and logger
                     final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac")
                     
                     st.success("✅ Video Processing Complete!")
