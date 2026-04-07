@@ -37,7 +37,6 @@ if video_file:
     st.video(video_path)
 
 async def generate_speech(text, output_path):
-    # Using ThihaNeural for natural Burmese narration
     communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural")
     await communicate.save(output_path)
 
@@ -54,24 +53,35 @@ if video_path and api_key:
                     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
                 ]
                 
-                # FIXED MODEL NAME: Removed 'models/' prefix to fix 404 error
-                model = genai.GenerativeModel('gemini-1.5-flash', safety_settings=safety_settings)
+                # Try multiple model names to fix 404 error
+                model_names = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-pro-vision']
+                model = None
+                
+                for m_name in model_names:
+                    try:
+                        model = genai.GenerativeModel(m_name, safety_settings=safety_settings)
+                        # Test if model exists
+                        test_response = model.generate_content("test")
+                        if test_response:
+                            break
+                    except:
+                        continue
+                
+                if not model:
+                    st.error("❌ Gemini Model ကို ရှာမတွေ့ပါ။ API Key မှန်မမှန် သို့မဟုတ် Model Access ရှိမရှိ ပြန်စစ်ပေးပါ။")
+                    st.stop()
                 
                 video_file_ai = genai.upload_file(path=video_path)
                 while video_file_ai.state.name == "PROCESSING":
                     time.sleep(2)
                     video_file_ai = genai.get_file(video_file_ai.name)
                 
-                # Enhanced prompt for human-like storytelling
                 prompt = """
                 Analyze this video and provide a detailed movie recap in BURMESE language.
-                
                 STORYTELLING STYLE:
                 - Act as a professional human movie narrator.
                 - Use natural, engaging, and emotional Burmese storytelling style.
-                - Avoid robotic or formal language. Use words that a real person would use to explain a movie to a friend.
-                - Ensure the narration is clear and well-paced.
-                
+                - Avoid robotic or formal language.
                 OUTPUT FORMAT:
                 [TITLES]
                 Title 1
@@ -89,20 +99,16 @@ if video_path and api_key:
                     st.error("AI က ဒီ Video ကို ပိတ်ပင်ထားပါတယ် (Blocked)။")
                 else:
                     full_text = response.text
-                    
-                    # Parsing titles and hashtags
                     titles_match = re.search(r'\[TITLES\]\n(.*?)\n(.*?)\n(.*?)\n', full_text + "\n\n\n", re.DOTALL)
                     hashtags_match = re.search(r'\[HASHTAGS\]\n(.*?)\n', full_text)
                     recap_text = full_text.split("[RECAP]")[-1].strip()
                     
-                    # Display Social Media Box
                     st.success("✨ Social Media Ready Content!")
                     col1, col2 = st.columns(2)
                     with col1:
                         st.subheader("📌 Catchy Titles")
                         if titles_match:
-                            for i in range(1, 4):
-                                st.code(titles_match.group(i).strip())
+                            for i in range(1, 4): st.code(titles_match.group(i).strip())
                     with col2:
                         st.subheader("🔥 Trending Hashtags")
                         if hashtags_match: st.code(hashtags_match.group(1).strip())
@@ -110,18 +116,13 @@ if video_path and api_key:
                     st.subheader("📝 Full Recap Script:")
                     st.write(recap_text)
                     
-                    # Generate Audio
                     audio_path = "narration.mp3"
                     asyncio.run(generate_speech(recap_text, audio_path))
                     
-                    # Process Video
                     video_clip = VideoFileClip(video_path)
                     audio_clip = AudioFileClip(audio_path)
-                    
-                    # Mute original audio
                     video_muted = video_clip.without_audio()
                     
-                    # Sync video duration with audio
                     if audio_clip.duration > video_muted.duration:
                         last_frame = video_muted.get_frame(video_muted.duration - 0.1)
                         freeze_frame = ImageClip(last_frame).with_duration(audio_clip.duration - video_muted.duration)
@@ -130,9 +131,7 @@ if video_path and api_key:
                         video_final = video_muted.with_duration(audio_clip.duration)
                     
                     final_video = video_final.with_audio(audio_clip)
-                    
                     output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
-                    # MoviePy v2.0+ fix: remove verbose and logger
                     final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac")
                     
                     st.success("✅ Video Processing Complete!")
