@@ -11,7 +11,7 @@ import edge_tts
 import tempfile
 import time
 import re
-from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips
+from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, concatenate_videoclips
 
 # Page configuration
 st.set_page_config(page_title="Web (1): AI Burmese Movie Narrator Pro", layout="wide")
@@ -22,10 +22,11 @@ st.markdown("Video ကိုကြည့်ပြီး လူတစ်ယော
 # Sidebar for Settings
 with st.sidebar:
     st.header("Settings")
-    api_key = st.text_input("Enter Gemini API Key:", type="password")
+    # SECURITY: Do not hardcode the API key here!
+    api_key = st.text_input("Enter Gemini API Key:", type="password", help="API Key ကို GitHub ပေါ် မတင်မိပါစေနဲ့။ Google က ချက်ချင်း ပိတ်လိုက်ပါလိမ့်မယ်။")
     st.info("API Key မရှိသေးရင် VPN ဖွင့်ပြီး [Google AI Studio](https://aistudio.google.com/app/apikey) မှာ ယူပါ။")
 
-# Input Section - Video Upload ONLY
+# Input Section - Video Upload
 st.subheader("📁 Upload Video")
 video_file = st.file_uploader("Upload Video (Max 500MB):", type=["mp4", "mov", "avi"])
 
@@ -53,7 +54,7 @@ if video_path and api_key:
                     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
                 ]
                 
-                # Use the latest supported models
+                # Using the latest supported models
                 model_names = ["gemini-1.5-flash-latest", "gemini-1.5-flash"]
                 model = None
                 model_name_used = ""
@@ -62,9 +63,9 @@ if video_path and api_key:
                     try:
                         model = genai.GenerativeModel(m_name, safety_settings=safety_settings)
                         model_name_used = m_name
-                        break # Stop if a model is successfully created
+                        # Test initialization
+                        break 
                     except Exception as e:
-                        st.warning(f"Could not initialize model {m_name}: {e}")
                         continue
                 
                 if not model:
@@ -73,10 +74,11 @@ if video_path and api_key:
                 else:
                     st.info(f"✅ Using Gemini Model: {model_name_used}")
                 
+                # Upload video to Gemini
                 video_file_ai = genai.upload_file(path=video_path)
-                with st.spinner("Uploading video..."):
+                with st.spinner("Uploading video to AI server..."):
                     while video_file_ai.state.name == "PROCESSING":
-                        time.sleep(10)
+                        time.sleep(5)
                         video_file_ai = genai.get_file(video_file_ai.name)
 
                 if video_file_ai.state.name == "FAILED":
@@ -106,9 +108,10 @@ if video_path and api_key:
                     st.error("AI က ဒီ Video ကို ပိတ်ပင်ထားပါတယ် (Blocked)။")
                 else:
                     full_text = response.text
-                    # Corrected regex for titles_match and hashtags_match
-                    titles_match = re.search(r'\[TITLES\]\n(.*?)\n(.*?)\n(.*?)\n', full_text + "\n\n\n", re.DOTALL)
-                    hashtags_match = re.search(r'\[HASHTAGS\]\n(.*?)\n', full_text)
+                    
+                    # Improved regex to handle titles and hashtags safely
+                    titles_match = re.search(r'\[TITLES\]\s*(.*?)\s*\[HASHTAGS\]', full_text, re.DOTALL)
+                    hashtags_match = re.search(r'\[HASHTAGS\]\s*(.*?)\s*\[RECAP\]', full_text, re.DOTALL)
                     recap_text = full_text.split("[RECAP]")[-1].strip()
                     
                     st.success("✨ Social Media Ready Content!")
@@ -116,51 +119,55 @@ if video_path and api_key:
                     with col1:
                         st.subheader("📌 Catchy Titles")
                         if titles_match:
-                            for i in range(1, 4): st.code(titles_match.group(i).strip())
+                            titles = titles_match.group(1).strip().split('\n')
+                            for t in titles[:3]: st.code(t.strip())
                     with col2:
                         st.subheader("🔥 Trending Hashtags")
-                        if hashtags_match: st.code(hashtags_match.group(1).strip())
+                        if hashtags_match: 
+                            st.code(hashtags_match.group(1).strip())
                     
                     st.subheader("📝 Full Recap Script:")
                     st.write(recap_text)
                     
-                    with st.spinner("Generating narration audio..."):
+                    # Generate Burmese Audio
+                    with st.spinner("Generating Burmese narration audio..."):
                         audio_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
                         asyncio.run(generate_speech(recap_text, audio_path))
                     
-                    with st.spinner("Combining video and audio..."):
+                    # Process Video with MoviePy
+                    with st.spinner("Combining video and audio... (This may take a few minutes)"):
                         video_clip = VideoFileClip(video_path)
                         audio_clip = AudioFileClip(audio_path)
                         
-                        # Mute the original video audio
+                        # Mute original video
                         video_muted = video_clip.without_audio()
                         
-                        # If audio is longer than video, freeze the last frame
+                        # Handle duration mismatch
                         if audio_clip.duration > video_muted.duration:
+                            # Freeze last frame if audio is longer
                             last_frame = video_muted.get_frame(video_muted.duration - 0.1)
-                            freeze_frame = ImageClip(last_frame, duration=audio_clip.duration - video_muted.duration)
+                            freeze_frame = ImageClip(last_frame).set_duration(audio_clip.duration - video_muted.duration)
                             video_final = concatenate_videoclips([video_muted, freeze_frame])
                         else:
-                            # Trim the video to match the audio duration
+                            # Trim video if audio is shorter
                             video_final = video_muted.subclip(0, audio_clip.duration)
                         
-                        # Set the new audio on the video
+                        # Set audio
                         final_video = video_final.set_audio(audio_clip)
                         output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
-                        final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac")
+                        final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac", fps=24)
                     
                     st.success("✅ Video Processing Complete!")
                     st.video(output_video_path)
                     with open(output_video_path, "rb") as f:
                         st.download_button("⬇️ Download Final Video (MP4)", f, "my_movie_recap.mp4", "video/mp4")
                     
-                    # Clean up temporary files
+                    # Clean up
                     video_clip.close()
                     audio_clip.close()
-                    os.remove(audio_path)
-                    os.remove(output_video_path)
+                    if os.path.exists(audio_path): os.remove(audio_path)
                 
-                # Delete the uploaded file from the cloud
+                # Delete uploaded file from Gemini
                 genai.delete_file(video_file_ai.name)
                 
             except Exception as e:
@@ -168,7 +175,6 @@ if video_path and api_key:
                 import traceback
                 st.error(traceback.format_exc())
             finally:
-                # Clean up the initial uploaded video file
                 if video_path and os.path.exists(video_path):
                     os.remove(video_path)
 
