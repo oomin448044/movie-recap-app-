@@ -58,15 +58,13 @@ if video_path and api_key:
             try:
                 genai.configure(api_key=api_key)
                 
-                # AUTOMATIC MODEL DISCOVERY to fix 404 errors
+                # GET AVAILABLE MODELS
                 available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                 
-                # Priority list: Pro models first for better timestamping
+                # Priority list: Use 1.5-flash first as it has better quota availability for free tier
                 model = None
                 model_name_used = ""
-                
-                # Filter for flash/pro models to find the best available one
-                priority_list = ["models/gemini-1.5-pro", "models/gemini-1.5-flash", "models/gemini-1.0-pro"]
+                priority_list = ["models/gemini-1.5-flash", "models/gemini-1.5-pro", "models/gemini-1.0-pro"]
                 
                 for p_model in priority_list:
                     if p_model in available_models:
@@ -74,13 +72,12 @@ if video_path and api_key:
                         model_name_used = p_model
                         break
                 
-                # Fallback to the first available model if priority ones are not found
                 if not model and available_models:
                     model = genai.GenerativeModel(available_models[0])
                     model_name_used = available_models[0]
 
                 if not model:
-                    st.error("❌ သင့် API Key နဲ့ အသုံးပြုလို့ရတဲ့ Gemini Model တစ်ခုမှ ရှာမတွေ့ပါ။ API Key မှန်မမှန် ပြန်စစ်ပေးပါ။")
+                    st.error("❌ သင့် API Key နဲ့ အသုံးပြုလို့ရတဲ့ Gemini Model တစ်ခုမှ ရှာမတွေ့ပါ။")
                     st.stop()
                 else:
                     st.info(f"✅ Using Gemini Model: {model_name_used}")
@@ -117,7 +114,7 @@ if video_path and api_key:
                 segments = extract_json(response.text)
                 
                 if not segments:
-                    st.error("AI ဆီကနေ အချိန်မှတ်တမ်းနဲ့ စာသားတွေကို မှန်ကန်စွာ မရရှိခဲ့ပါ။ Raw response ကို အောက်မှာ ကြည့်ပါ။")
+                    st.error("AI ဆီကနေ အချိန်မှတ်တမ်းနဲ့ စာသားတွေကို မှန်ကန်စွာ မရရှိခဲ့ပါ။")
                     st.text(response.text)
                     st.stop()
 
@@ -135,20 +132,16 @@ if video_path and api_key:
                     end = float(seg['end'])
                     text = seg['text']
                     
-                    # Gap before segment (Original video without audio)
                     if start > current_time:
                         gap_clip = original_video.subclip(current_time, start).without_audio()
                         final_clips.append(gap_clip)
                     
-                    # Generate Burmese Audio
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
                         asyncio.run(generate_speech(text, tmp_audio.name))
                         seg_audio = AudioFileClip(tmp_audio.name)
                     
-                    # Original video segment
                     seg_video = original_video.subclip(start, end).without_audio()
                     
-                    # SYNC LOGIC: If audio is longer, freeze the last frame of the video segment
                     if seg_audio.duration > seg_video.duration:
                         last_frame = seg_video.get_frame(seg_video.duration - 0.01)
                         freeze_duration = seg_audio.duration - seg_video.duration
@@ -156,18 +149,15 @@ if video_path and api_key:
                         seg_video_extended = concatenate_videoclips([seg_video, freeze_clip])
                         seg_video_final = seg_video_extended.set_audio(seg_audio)
                     else:
-                        # If audio is shorter, it just plays over the video segment
                         seg_video_final = seg_video.set_audio(seg_audio)
                     
                     final_clips.append(seg_video_final)
                     current_time = end
                     progress_bar.progress((i + 1) / len(segments))
 
-                # Add remaining video if any
                 if current_time < original_video.duration:
                     final_clips.append(original_video.subclip(current_time, original_video.duration).without_audio())
 
-                # Combine everything
                 with st.spinner("Final Video ကို ပေါင်းစပ်နေပါတယ်..."):
                     final_video = concatenate_videoclips(final_clips)
                     output_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
@@ -178,7 +168,6 @@ if video_path and api_key:
                 with open(output_path, "rb") as f:
                     st.download_button("⬇️ Download Final Video", f, "dubbed_video.mp4", "video/mp4")
 
-                # Cleanup
                 original_video.close()
                 genai.delete_file(video_file_ai.name)
 
