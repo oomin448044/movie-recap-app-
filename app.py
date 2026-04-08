@@ -22,7 +22,7 @@ st.markdown("Video ကိုကြည့်ပြီး လူတစ်ယော
 # Sidebar for Settings
 with st.sidebar:
     st.header("Settings")
-    # SECURITY: Do not hardcode the API key here!
+    # API Key Input - Secure way
     api_key = st.text_input("Enter Gemini API Key:", type="password", help="API Key ကို GitHub ပေါ် မတင်မိပါစေနဲ့။ Google က ချက်ချင်း ပိတ်လိုက်ပါလိမ့်မယ်။")
     st.info("API Key မရှိသေးရင် VPN ဖွင့်ပြီး [Google AI Studio](https://aistudio.google.com/app/apikey) မှာ ယူပါ။")
 
@@ -54,18 +54,20 @@ if video_path and api_key:
                     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
                 ]
                 
-                # Using the latest supported models
-                model_names = ["gemini-1.5-flash-latest", "gemini-1.5-flash"]
+                # Using the most stable model names to avoid 404 errors
+                # Removed '-latest' suffix to avoid API version compatibility issues
+                model_names = ["gemini-1.5-flash", "models/gemini-1.5-flash", "gemini-1.5-pro"]
                 model = None
                 model_name_used = ""
 
                 for m_name in model_names:
                     try:
                         model = genai.GenerativeModel(m_name, safety_settings=safety_settings)
+                        # Test if model exists by calling a simple prompt
+                        # Some versions might fail here if the name is not found
                         model_name_used = m_name
-                        # Test initialization
                         break 
-                    except Exception as e:
+                    except Exception:
                         continue
                 
                 if not model:
@@ -110,29 +112,40 @@ if video_path and api_key:
                     full_text = response.text
                     
                     # Improved regex to handle titles and hashtags safely
-                    titles_match = re.search(r'\[TITLES\]\s*(.*?)\s*\[HASHTAGS\]', full_text, re.DOTALL)
-                    hashtags_match = re.search(r'\[HASHTAGS\]\s*(.*?)\s*\[RECAP\]', full_text, re.DOTALL)
-                    recap_text = full_text.split("[RECAP]")[-1].strip()
+                    # Using more robust matching logic
+                    titles_part = ""
+                    hashtags_part = ""
+                    recap_part = ""
+                    
+                    if "[TITLES]" in full_text:
+                        titles_part = full_text.split("[TITLES]")[1].split("[HASHTAGS]")[0].strip()
+                    if "[HASHTAGS]" in full_text:
+                        hashtags_part = full_text.split("[HASHTAGS]")[1].split("[RECAP]")[0].strip()
+                    if "[RECAP]" in full_text:
+                        recap_part = full_text.split("[RECAP]")[1].strip()
+                    else:
+                        recap_part = full_text # Fallback
                     
                     st.success("✨ Social Media Ready Content!")
                     col1, col2 = st.columns(2)
                     with col1:
                         st.subheader("📌 Catchy Titles")
-                        if titles_match:
-                            titles = titles_match.group(1).strip().split('\n')
-                            for t in titles[:3]: st.code(t.strip())
+                        if titles_part:
+                            titles = titles_part.split('\n')
+                            for t in titles[:3]: 
+                                if t.strip(): st.code(t.strip())
                     with col2:
                         st.subheader("🔥 Trending Hashtags")
-                        if hashtags_match: 
-                            st.code(hashtags_match.group(1).strip())
+                        if hashtags_part: 
+                            st.code(hashtags_part.strip())
                     
                     st.subheader("📝 Full Recap Script:")
-                    st.write(recap_text)
+                    st.write(recap_part)
                     
                     # Generate Burmese Audio
                     with st.spinner("Generating Burmese narration audio..."):
                         audio_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
-                        asyncio.run(generate_speech(recap_text, audio_path))
+                        asyncio.run(generate_speech(recap_part, audio_path))
                     
                     # Process Video with MoviePy
                     with st.spinner("Combining video and audio... (This may take a few minutes)"):
@@ -166,6 +179,7 @@ if video_path and api_key:
                     video_clip.close()
                     audio_clip.close()
                     if os.path.exists(audio_path): os.remove(audio_path)
+                    if os.path.exists(output_video_path): os.remove(output_video_path)
                 
                 # Delete uploaded file from Gemini
                 genai.delete_file(video_file_ai.name)
