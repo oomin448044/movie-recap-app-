@@ -39,7 +39,6 @@ if video_file:
 
 async def generate_speech(text, output_path):
     # ThihaNeural for a clear male storyteller voice
-    # Setting rate slightly slower for better clarity and natural feel
     communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural", rate="-5%")
     await communicate.save(output_path)
 
@@ -59,29 +58,29 @@ if video_path and api_key:
             try:
                 genai.configure(api_key=api_key)
                 
-                # Use the model list from user's original code to ensure compatibility
-                model_names = [
-                    "gemini-2.0-flash-exp", # Added current working experimental
-                    "gemini-1.5-flash", 
-                    "gemini-1.5-pro",
-                    "gemini-2.5-flash", # Future placeholders from original
-                    "gemini-3.0-flash"
-                ]
+                # AUTOMATIC MODEL DISCOVERY to fix 404 errors
+                available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                 
+                # Priority list: Pro models first for better timestamping
                 model = None
                 model_name_used = ""
-                for m_name in model_names:
-                    try:
-                        model = genai.GenerativeModel(m_name)
-                        # Test if model exists by sending a tiny prompt
-                        # (This is safer than just initializing)
-                        model_name_used = m_name
-                        break
-                    except Exception:
-                        continue
                 
+                # Filter for flash/pro models to find the best available one
+                priority_list = ["models/gemini-1.5-pro", "models/gemini-1.5-flash", "models/gemini-1.0-pro"]
+                
+                for p_model in priority_list:
+                    if p_model in available_models:
+                        model = genai.GenerativeModel(p_model)
+                        model_name_used = p_model
+                        break
+                
+                # Fallback to the first available model if priority ones are not found
+                if not model and available_models:
+                    model = genai.GenerativeModel(available_models[0])
+                    model_name_used = available_models[0]
+
                 if not model:
-                    st.error("❌ Gemini Model ကို ရှာမတွေ့ပါ။ API Key မှန်မမှန် သို့မဟုတ် Model Access ရှိမရှိ ပြန်စစ်ပေးပါ။")
+                    st.error("❌ သင့် API Key နဲ့ အသုံးပြုလို့ရတဲ့ Gemini Model တစ်ခုမှ ရှာမတွေ့ပါ။ API Key မှန်မမှန် ပြန်စစ်ပေးပါ။")
                     st.stop()
                 else:
                     st.info(f"✅ Using Gemini Model: {model_name_used}")
@@ -136,7 +135,7 @@ if video_path and api_key:
                     end = float(seg['end'])
                     text = seg['text']
                     
-                    # Gap before segment
+                    # Gap before segment (Original video without audio)
                     if start > current_time:
                         gap_clip = original_video.subclip(current_time, start).without_audio()
                         final_clips.append(gap_clip)
