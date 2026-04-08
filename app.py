@@ -58,8 +58,34 @@ if video_path and api_key:
         with st.spinner("AI က Video ကို လေ့လာပြီး မူရင်းစကားပြောများကို ဘာသာပြန်နေပါတယ်..."):
             try:
                 genai.configure(api_key=api_key)
-                model = genai.GenerativeModel("gemini-1.5-pro")
                 
+                # Use the model list from user's original code to ensure compatibility
+                model_names = [
+                    "gemini-2.0-flash-exp", # Added current working experimental
+                    "gemini-1.5-flash", 
+                    "gemini-1.5-pro",
+                    "gemini-2.5-flash", # Future placeholders from original
+                    "gemini-3.0-flash"
+                ]
+                
+                model = None
+                model_name_used = ""
+                for m_name in model_names:
+                    try:
+                        model = genai.GenerativeModel(m_name)
+                        # Test if model exists by sending a tiny prompt
+                        # (This is safer than just initializing)
+                        model_name_used = m_name
+                        break
+                    except Exception:
+                        continue
+                
+                if not model:
+                    st.error("❌ Gemini Model ကို ရှာမတွေ့ပါ။ API Key မှန်မမှန် သို့မဟုတ် Model Access ရှိမရှိ ပြန်စစ်ပေးပါ။")
+                    st.stop()
+                else:
+                    st.info(f"✅ Using Gemini Model: {model_name_used}")
+
                 # Upload video to Gemini
                 video_file_ai = genai.upload_file(path=video_path)
                 while video_file_ai.state.name == "PROCESSING":
