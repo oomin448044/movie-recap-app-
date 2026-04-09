@@ -3,3 +3,6 @@ google-generativeai
 moviepy==1.0.3
 edge-tts
 pydub
+numpy
+opencv-python-headless
+pillow
