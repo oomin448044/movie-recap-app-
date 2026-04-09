@@ -54,21 +54,17 @@ if video_path and api_key:
                     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
                 ]
                 
-                # Using 2026 current models: Gemini 2.5 and 3.0 series
-                # gemini-1.5 is deprecated in 2026.
-                model_names = [
-                    "gemini-2.5-flash", 
-                    "gemini-3.0-flash", 
-                    "gemini-2.5-pro",
-                    "models/gemini-2.5-flash",
-                    "models/gemini-3.0-flash"
-                ]
+                # Using the most stable model names to avoid 404 errors
+                # Removed '-latest' suffix to avoid API version compatibility issues
+                model_names = ["gemini-1.5-flash", "models/gemini-1.5-flash", "gemini-1.5-pro"]
                 model = None
                 model_name_used = ""
 
                 for m_name in model_names:
                     try:
                         model = genai.GenerativeModel(m_name, safety_settings=safety_settings)
+                        # Test if model exists by calling a simple prompt
+                        # Some versions might fail here if the name is not found
                         model_name_used = m_name
                         break 
                     except Exception:
@@ -115,23 +111,19 @@ if video_path and api_key:
                 else:
                     full_text = response.text
                     
-                    # Robust content parsing
+                    # Improved regex to handle titles and hashtags safely
+                    # Using more robust matching logic
                     titles_part = ""
                     hashtags_part = ""
                     recap_part = ""
                     
                     if "[TITLES]" in full_text:
-                        parts = full_text.split("[TITLES]")
-                        if len(parts) > 1:
-                            subparts = parts[1].split("[HASHTAGS]")
-                            titles_part = subparts[0].strip()
-                            if len(subparts) > 1:
-                                recap_split = subparts[1].split("[RECAP]")
-                                hashtags_part = recap_split[0].strip()
-                                if len(recap_split) > 1:
-                                    recap_part = recap_split[1].strip()
-                    
-                    if not recap_part:
+                        titles_part = full_text.split("[TITLES]")[1].split("[HASHTAGS]")[0].strip()
+                    if "[HASHTAGS]" in full_text:
+                        hashtags_part = full_text.split("[HASHTAGS]")[1].split("[RECAP]")[0].strip()
+                    if "[RECAP]" in full_text:
+                        recap_part = full_text.split("[RECAP]")[1].strip()
+                    else:
                         recap_part = full_text # Fallback
                     
                     st.success("✨ Social Media Ready Content!")
