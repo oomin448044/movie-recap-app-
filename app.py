@@ -132,7 +132,7 @@ if video_path and api_key:
                     
                     final_video = video_final.with_audio(audio_clip)
                     output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
-                    final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac")
+                    final_video.write_videofile(output_video_path, codec="libx64", audio_codec="aac")
                     
                     st.success("✅ Video Processing Complete!")
                     st.video(output_video_path)
