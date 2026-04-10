@@ -11,7 +11,7 @@ import edge_tts
 import tempfile
 import time
 import re
-from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips
+from moviepy import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips
 
 # Page configuration
 st.set_page_config(page_title="Web (1): AI Burmese Movie Narrator Pro", layout="wide")
@@ -53,36 +53,29 @@ if video_path and api_key:
                     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
                 ]
                 
-                # Use the latest supported models
-                model_names = ["gemini-1.5-flash-latest", "gemini-1.5-flash"]
+                # Try multiple model names to fix 404 error
+                model_names = ["gemini-1.5-flash", "gemini-1.5-flash-latest"]
                 model = None
-                model_name_used = ""
-
+                
                 for m_name in model_names:
                     try:
                         model = genai.GenerativeModel(m_name, safety_settings=safety_settings)
-                        model_name_used = m_name
-                        break # Stop if a model is successfully created
-                    except Exception as e:
-                        st.warning(f"Could not initialize model {m_name}: {e}")
+                        # No need to test if model exists, just try to create it
+                        break
+                    except:
                         continue
                 
                 if not model:
                     st.error("❌ Gemini Model ကို ရှာမတွေ့ပါ။ API Key မှန်မမှန် သို့မဟုတ် Model Access ရှိမရှိ ပြန်စစ်ပေးပါ။")
                     st.stop()
                 else:
-                    st.info(f"✅ Using Gemini Model: {model_name_used}")
+                    st.info(f"✅ Using Gemini Model: {model.model_name}")
                 
                 video_file_ai = genai.upload_file(path=video_path)
-                with st.spinner("Uploading video..."):
-                    while video_file_ai.state.name == "PROCESSING":
-                        time.sleep(10)
-                        video_file_ai = genai.get_file(video_file_ai.name)
-
-                if video_file_ai.state.name == "FAILED":
-                    st.error("Video processing failed. Please try another video.")
-                    st.stop()
-
+                while video_file_ai.state.name == "PROCESSING":
+                    time.sleep(2)
+                    video_file_ai = genai.get_file(video_file_ai.name)
+                
                 prompt = """
                 Analyze this video and provide a detailed movie recap in BURMESE language.
                 STORYTELLING STYLE:
@@ -106,7 +99,6 @@ if video_path and api_key:
                     st.error("AI က ဒီ Video ကို ပိတ်ပင်ထားပါတယ် (Blocked)။")
                 else:
                     full_text = response.text
-                    # Corrected regex for titles_match and hashtags_match
                     titles_match = re.search(r'\[TITLES\]\n(.*?)\n(.*?)\n(.*?)\n', full_text + "\n\n\n", re.DOTALL)
                     hashtags_match = re.search(r'\[HASHTAGS\]\n(.*?)\n', full_text)
                     recap_text = full_text.split("[RECAP]")[-1].strip()
@@ -124,53 +116,38 @@ if video_path and api_key:
                     st.subheader("📝 Full Recap Script:")
                     st.write(recap_text)
                     
-                    with st.spinner("Generating narration audio..."):
-                        audio_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
-                        asyncio.run(generate_speech(recap_text, audio_path))
+                    audio_path = "narration.mp3"
+                    asyncio.run(generate_speech(recap_text, audio_path))
                     
-                    with st.spinner("Combining video and audio..."):
-                        video_clip = VideoFileClip(video_path)
-                        audio_clip = AudioFileClip(audio_path)
-                        
-                        # Mute the original video audio
-                        video_muted = video_clip.without_audio()
-                        
-                        # If audio is longer than video, freeze the last frame
-                        if audio_clip.duration > video_muted.duration:
-                            last_frame = video_muted.get_frame(video_muted.duration - 0.1)
-                            freeze_frame = ImageClip(last_frame, duration=audio_clip.duration - video_muted.duration)
-                            video_final = concatenate_videoclips([video_muted, freeze_frame])
-                        else:
-                            # Trim the video to match the audio duration
-                            video_final = video_muted.subclip(0, audio_clip.duration)
-                        
-                        # Set the new audio on the video
-                        final_video = video_final.set_audio(audio_clip)
-                        output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
-                        final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac")
+                    video_clip = VideoFileClip(video_path)
+                    audio_clip = AudioFileClip(audio_path)
+                    video_muted = video_clip.without_audio()
+                    
+                    if audio_clip.duration > video_muted.duration:
+                        last_frame = video_muted.get_frame(video_muted.duration - 0.1)
+                        freeze_frame = ImageClip(last_frame).with_duration(audio_clip.duration - video_muted.duration)
+                        video_final = concatenate_videoclips([video_muted, freeze_frame])
+                    else:
+                        video_final = video_muted.with_duration(audio_clip.duration)
+                    
+                    final_video = video_final.with_audio(audio_clip)
+                    output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
+                    final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac")
                     
                     st.success("✅ Video Processing Complete!")
                     st.video(output_video_path)
                     with open(output_video_path, "rb") as f:
                         st.download_button("⬇️ Download Final Video (MP4)", f, "my_movie_recap.mp4", "video/mp4")
                     
-                    # Clean up temporary files
                     video_clip.close()
+                    video_muted.close()
                     audio_clip.close()
-                    os.remove(audio_path)
-                    os.remove(output_video_path)
                 
-                # Delete the uploaded file from the cloud
                 genai.delete_file(video_file_ai.name)
                 
             except Exception as e:
                 st.error(f"❌ Error: {str(e)}")
                 import traceback
                 st.error(traceback.format_exc())
-            finally:
-                # Clean up the initial uploaded video file
-                if video_path and os.path.exists(video_path):
-                    os.remove(video_path)
-
 elif not api_key and video_path:
     st.warning("⚠️ Please enter your API Key in the sidebar.")
