@@ -35,7 +35,7 @@ def find_working_model():
         return 'models/gemini-1.5-flash'
 
 def get_duration(file_path):
-    """FFprobe ကိုသုံးပြီး file ရဲ့ duration ကို စက္ကန့်နဲ့ ရယူပါသည်"""
+    """FFprobe ကိုသုံးပြီး file ရဲ့ duration ကို အတိအကျ စက္ကန့်နဲ့ ရယူပါသည်"""
     try:
         cmd = [
             "ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -106,22 +106,29 @@ if video_file and api_key:
                 audio_path = "narration_audio.mp3"
                 asyncio.run(generate_burmese_audio(recap_text, audio_path))
 
-                st.write("🎬 Finalizing Video & Audio Sync (Precise Freeze)...")
+                st.write("🎬 Finalizing Video & Audio Sync (Professional Mode)...")
                 
-                v_dur = get_duration(video_path)
+                # ၁။ ဗီဒီယိုကို Constant Frame Rate (CFR) အဖြစ် အရင်ပြောင်းပါသည် (Sync ပိုကောင်းစေရန်)
+                cfr_video = "cfr_video.mp4"
+                subprocess.run([
+                    "ffmpeg", "-i", video_path, "-r", "24", "-c:v", "libx264", 
+                    "-pix_fmt", "yuv420p", "-preset", "ultrafast", cfr_video, "-y"
+                ], check=True)
+                
+                v_dur = get_duration(cfr_video)
                 a_dur = get_duration(audio_path)
                 output_video_path = "final_output.mp4"
                 
                 if a_dur > v_dur:
-                    # အသံက ပိုရှည်နေလျှင် ဗီဒီယိုရဲ့ နောက်ဆုံး frame ကို freeze လုပ်ပါမည်
+                    # အသံက ပိုရှည်နေလျှင် နောက်ဆုံး frame ကို freeze လုပ်ပါမည်
                     freeze_duration = a_dur - v_dur
                     last_frame_path = "last_frame.jpg"
                     freeze_video_path = "freeze_video.mp4"
                     
-                    # ၁။ နောက်ဆုံး frame ကို ပုံအဖြစ် ထုတ်ယူပါသည်
-                    subprocess.run(["ffmpeg", "-sseof", "-0.1", "-i", video_path, "-update", "1", "-q:v", "1", last_frame_path, "-y"], check=True)
+                    # ၂။ နောက်ဆုံး frame ကို ပုံအဖြစ် ထုတ်ယူပါသည်
+                    subprocess.run(["ffmpeg", "-sseof", "-0.1", "-i", cfr_video, "-update", "1", "-q:v", "1", last_frame_path, "-y"], check=True)
                     
-                    # ၂။ အဲဒီပုံကို freeze video အဖြစ် ဖန်တီးပါသည် (မူရင်းဗီဒီယိုရဲ့ resolution နဲ့ fps အတိုင်း)
+                    # ၃။ အဲဒီပုံကို freeze video အဖြစ် ဖန်တီးပါသည် (CFR 24fps အတိုင်း)
                     subprocess.run([
                         "ffmpeg", "-loop", "1", "-i", last_frame_path, 
                         "-c:v", "libx264", "-t", str(freeze_duration), 
@@ -129,22 +136,22 @@ if video_file and api_key:
                         "-r", "24", freeze_video_path, "-y"
                     ], check=True)
                     
-                    # ၃။ မူရင်းဗီဒီယိုနဲ့ freeze video ကို ပေါင်းစပ်ပြီး အသံထည့်ပါသည်
-                    # concat filter ကို သုံးပြီး ဗီဒီယိုနှစ်ခုကို ပေါင်းပါသည်
+                    # ၄။ မူရင်းဗီဒီယိုနဲ့ freeze video ကို ပေါင်းစပ်ပြီး အသံထည့်ပါသည်
+                    # filter_complex ကို သုံးပြီး timestamp များကို reset လုပ်ကာ အသံနဲ့ ညှိပါသည်
                     cmd = [
-                        "ffmpeg", "-i", video_path, "-i", freeze_video_path, "-i", audio_path,
+                        "ffmpeg", "-i", cfr_video, "-i", freeze_video_path, "-i", audio_path,
                         "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
                         "-map", "[v]", "-map", "2:a",
                         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "23",
-                        "-c:a", "aac", "-shortest", output_video_path, "-y"
+                        "-c:a", "aac", "-b:a", "128k", "-shortest", output_video_path, "-y"
                     ]
                 else:
                     # ဗီဒီယိုက ပိုရှည်နေလျှင် အသံပြီးဆုံးချိန်မှာ ဗီဒီယိုကို ဖြတ်ပါသည်
                     cmd = [
-                        "ffmpeg", "-i", video_path, "-i", audio_path,
+                        "ffmpeg", "-i", cfr_video, "-i", audio_path,
                         "-map", "0:v", "-map", "1:a",
                         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "23",
-                        "-c:a", "aac", "-t", str(a_dur), output_video_path, "-y"
+                        "-c:a", "aac", "-b:a", "128k", "-t", str(a_dur), output_video_path, "-y"
                     ]
                 
                 try:
@@ -176,7 +183,7 @@ if video_file and api_key:
             st.error(f"An error occurred: {e}")
         finally:
             # Cleanup files
-            temp_files = [video_path, audio_path, "last_frame.jpg", "freeze_video.mp4", "final_output.mp4"]
+            temp_files = [video_path, cfr_video, audio_path, "last_frame.jpg", "freeze_video.mp4", "final_output.mp4"]
             for f in temp_files:
                 if os.path.exists(f):
                     try: os.remove(f)
