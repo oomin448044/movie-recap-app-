@@ -24,12 +24,11 @@ with st.sidebar:
 
 # --- Functions ---
 async def generate_burmese_audio(text, output_path):
-    # အသံကို ပိုနှေးစေပြီး လူပြောသံနဲ့ ပိုတူစေရန် ညှိထားပါသည်
-    communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural", rate="-15%", pitch="-5Hz")
+    # Rate ကို -20% အထိ လျှော့ချလိုက်ခြင်းက AI အသံထက် လူတစ်ယောက် အေးအေးဆေးဆေး ပြောပြနေသလို ပိုဖြစ်စေပါတယ်
+    communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural", rate="-20%", pitch="-5Hz")
     await communicate.save(output_path)
 
 def find_working_model():
-    """သင့် API Key ဖြင့် အလုပ်လုပ်နိုင်သော Model ကို အလိုအလျောက် ရှာဖွေပေးမည့် Function"""
     try:
         models = genai.list_models()
         for m in models:
@@ -43,7 +42,6 @@ def find_working_model():
 video_file = st.file_uploader("📁 Upload Movie Clip:", type=["mp4", "mov", "avi"])
 
 if video_file and api_key:
-    # Save uploaded file with .mp4 suffix
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tfile:
         tfile.write(video_file.read())
         video_path = tfile.name
@@ -56,9 +54,8 @@ if video_file and api_key:
             
             with st.status("AI is processing...", expanded=True) as status:
                 # 1. Automatic Model Discovery
-                st.write("🔍 Discovering available Gemini models...")
+                st.write("🔍 Finding best available Gemini model...")
                 model_name = find_working_model()
-                st.write(f"✅ Selected Model: {model_name}")
                 model = genai.GenerativeModel(model_name)
 
                 # 2. Upload Video
@@ -68,17 +65,22 @@ if video_file and api_key:
                     time.sleep(2)
                     gen_file = genai.get_file(gen_file.name)
                 
-                # 3. Generate Script
-                st.write("📝 Generating natural Burmese storytelling script...")
+                # 3. Generate Script (Strict Instruction for Storytelling)
+                st.write("📝 Generating natural Burmese narration...")
                 prompt = """
-                Analyze this movie clip and write a professional movie recap in BURMESE.
-                STYLE: Natural, engaging, human-like storytelling. 
-                Act as a professional movie narrator.
+                Analyze this movie clip and provide a BURMESE narration.
+                STRICT RULES:
+                1. Translate and narrate only what is happening in the video.
+                2. NO introductions like "Hello everyone", "Welcome back", or "In this video".
+                3. NO conclusions like "Thanks for watching" or "Subscribe for more".
+                4. STYLE: Act like a professional human movie narrator telling a story to a friend.
+                5. Use natural, conversational Burmese (NOT formal).
+                6. Focus on the actual dialogue and scenes in the clip.
                 FORMAT:
                 [TITLES]
-                (Give 3 catchy titles)
+                (3 catchy titles)
                 [RECAP]
-                (The full story in Burmese)
+                (The narration text only)
                 """
                 
                 try:
@@ -95,29 +97,30 @@ if video_file and api_key:
                 # Parsing
                 titles_match = re.search(r"\[TITLES\](.*?)\[RECAP\]", full_response, re.DOTALL)
                 recap_match = re.search(r"\[RECAP\](.*)", full_response, re.DOTALL)
-                title_list = titles_match.group(1).strip().split('\n') if titles_match else ["Movie Recap 1", "Movie Recap 2", "Movie Recap 3"]
+                title_list = titles_match.group(1).strip().split('\n') if titles_match else ["Movie Recap"]
                 recap_text = recap_match.group(1).strip() if recap_match else full_response
 
                 # 4. Generate Audio
-                st.write("🎙️ Creating natural Burmese voiceover...")
+                st.write("🎙️ Creating natural Burmese voiceover (Thiha Voice)...")
                 audio_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
                 asyncio.run(generate_burmese_audio(recap_text, audio_temp.name))
 
-                # 5. Video Processing (No Blur)
+                # 5. Video Processing & Sync
                 st.write("🎬 Finalizing Video & Audio Sync...")
                 video_clip = VideoFileClip(video_path)
                 audio_clip = AudioFileClip(audio_temp.name)
 
-                # Blur မလုပ်ဘဲ မူရင်းအသံကိုသာ ဖျောက်ပါသည်
-                video_processed = video_clip.without_audio()
+                # Original audio ကို ဖျောက်ပါသည်
+                video_muted = video_clip.without_audio()
 
-                if audio_clip.duration > video_processed.duration:
-                    freeze_duration = audio_clip.duration - video_processed.duration
-                    last_frame = video_processed.get_frame(video_processed.duration - 0.1)
+                # Sync logic: အသံက ပိုရှည်နေလျှင် နောက်ဆုံး Frame ကို Freeze လုပ်ပါမည်
+                if audio_clip.duration > video_muted.duration:
+                    freeze_duration = audio_clip.duration - video_muted.duration
+                    last_frame = video_muted.get_frame(video_muted.duration - 0.1)
                     freeze_clip = ImageClip(last_frame).set_duration(freeze_duration)
-                    video_final = concatenate_videoclips([video_processed, freeze_clip])
+                    video_final = concatenate_videoclips([video_muted, freeze_clip])
                 else:
-                    video_final = video_processed.subclip(0, audio_clip.duration)
+                    video_final = video_muted.subclip(0, audio_clip.duration)
 
                 final_result = video_final.set_audio(audio_clip)
                 
