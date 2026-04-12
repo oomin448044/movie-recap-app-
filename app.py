@@ -8,7 +8,7 @@ import time
 import re
 import cv2
 import numpy as np
-from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, concatenate_videoclips
+from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, concatenate_videoclips, CompositeVideoClip
 
 # --- Configuration ---
 st.set_page_config(page_title="Burmese AI Movie Narrator Pro", layout="wide")
@@ -24,8 +24,8 @@ with st.sidebar:
 
 # --- Functions ---
 async def generate_burmese_audio(text, output_path):
-    # Rate ကို -20% အထိ လျှော့ချလိုက်ခြင်းက AI အသံထက် လူတစ်ယောက် အေးအေးဆေးဆေး ပြောပြနေသလို ပိုဖြစ်စေပါတယ်
-    communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural", rate="-20%", pitch="-5Hz")
+    # Rate ကို -5% ခန့်သာ ထားခြင်းဖြင့် မနှေးလွန်းဘဲ လူပြောသံနှင့် ပိုတူစေပါသည်
+    communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural", rate="-5%", pitch="-2Hz")
     await communicate.save(output_path)
 
 def find_working_model():
@@ -65,17 +65,16 @@ if video_file and api_key:
                     time.sleep(2)
                     gen_file = genai.get_file(gen_file.name)
                 
-                # 3. Generate Script (Strict Instruction for Storytelling)
+                # 3. Generate Script (Improved Prompt for Human-like Voice)
                 st.write("📝 Generating natural Burmese narration...")
                 prompt = """
                 Analyze this movie clip and provide a BURMESE narration.
                 STRICT RULES:
                 1. Translate and narrate only what is happening in the video.
-                2. NO introductions like "Hello everyone", "Welcome back", or "In this video".
-                3. NO conclusions like "Thanks for watching" or "Subscribe for more".
-                4. STYLE: Act like a professional human movie narrator telling a story to a friend.
-                5. Use natural, conversational Burmese (NOT formal).
-                6. Focus on the actual dialogue and scenes in the clip.
+                2. NO introductions and NO conclusions.
+                3. STYLE: Act like a professional human storyteller. 
+                4. TONE: Conversational, emotional, and engaging (NOT reading a book).
+                5. Use natural Burmese spoken language (e.g., use 'သူက' instead of formal terms).
                 FORMAT:
                 [TITLES]
                 (3 catchy titles)
@@ -101,11 +100,11 @@ if video_file and api_key:
                 recap_text = recap_match.group(1).strip() if recap_match else full_response
 
                 # 4. Generate Audio
-                st.write("🎙️ Creating natural Burmese voiceover (Thiha Voice)...")
+                st.write("🎙️ Creating natural Burmese voiceover...")
                 audio_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
                 asyncio.run(generate_burmese_audio(recap_text, audio_temp.name))
 
-                # 5. Video Processing & Sync
+                # 5. Video Processing & Strong Sync Logic
                 st.write("🎬 Finalizing Video & Audio Sync...")
                 video_clip = VideoFileClip(video_path)
                 audio_clip = AudioFileClip(audio_temp.name)
@@ -116,10 +115,14 @@ if video_file and api_key:
                 # Sync logic: အသံက ပိုရှည်နေလျှင် နောက်ဆုံး Frame ကို Freeze လုပ်ပါမည်
                 if audio_clip.duration > video_muted.duration:
                     freeze_duration = audio_clip.duration - video_muted.duration
+                    # နောက်ဆုံး frame ကို ယူပါသည်
                     last_frame = video_muted.get_frame(video_muted.duration - 0.1)
-                    freeze_clip = ImageClip(last_frame).set_duration(freeze_duration)
-                    video_final = concatenate_videoclips([video_muted, freeze_clip])
+                    # နောက်ဆုံး frame ကို ImageClip အဖြစ် ပြောင်းပြီး ကျန်ရှိသော duration အထိ ထားပါသည်
+                    freeze_clip = ImageClip(last_frame).set_duration(freeze_duration).set_start(video_muted.duration)
+                    # Video နှင့် Freeze Clip ကို ပေါင်းစပ်ပါသည်
+                    video_final = CompositeVideoClip([video_muted, freeze_clip])
                 else:
+                    # အသံက ပိုတိုနေလျှင် video ကို အသံအရှည်အတိုင်း ဖြတ်ပါသည်
                     video_final = video_muted.subclip(0, audio_clip.duration)
 
                 final_result = video_final.set_audio(audio_clip)
