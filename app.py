@@ -8,6 +8,7 @@ import re
 import cv2
 import numpy as np
 from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip
+import subprocess
 
 # --- Configuration ---
 st.set_page_config(page_title="Burmese AI Movie Narrator Pro", layout="wide")
@@ -99,15 +100,26 @@ if video_file and api_key:
                 asyncio.run(generate_burmese_audio(recap_text, audio_path))
 
                 st.write("🎬 Finalizing Video & Audio Sync...")
+                
+                # Convert video to a compatible format using ffmpeg before MoviePy processes it
+                processed_video_path = "processed_input_video.mp4"
+                try:
+                    subprocess.run(["ffmpeg", "-i", video_path, "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-c:a", "aac", "-b:a", "128k", processed_video_path, "-y"], check=True)
+                except subprocess.CalledProcessError as e:
+                    st.error(f"FFmpeg video processing failed: {e}")
+                    raise
+
                 # MoviePy ဖြင့် ဖိုင်ကို တိုက်ရိုက်ဖွင့်ပါသည်
-                video_clip = VideoFileClip(video_path)
+                video_clip = VideoFileClip(processed_video_path)
                 audio_clip = AudioFileClip(audio_path)
                 video_muted = video_clip.without_audio()
 
                 # Sync logic: အသံက ပိုရှည်နေလျှင် နောက်ဆုံး Frame ကို Freeze လုပ်ပါမည်
                 if audio_clip.duration > video_muted.duration:
                     freeze_duration = audio_clip.duration - video_muted.duration
-                    last_frame = video_muted.get_frame(video_muted.duration - 0.01)
+                    # Ensure freeze_duration is not negative
+                    if freeze_duration < 0: freeze_duration = 0
+                    last_frame = video_muted.get_frame(video_muted.duration - 0.01) if video_muted.duration > 0.01 else np.zeros((100, 100, 3), dtype=np.uint8) # Fallback for very short videos
                     freeze_clip = ImageClip(last_frame).set_duration(freeze_duration).set_start(video_muted.duration)
                     video_final = CompositeVideoClip([video_muted, freeze_clip]).set_duration(audio_clip.duration)
                 else:
@@ -143,7 +155,7 @@ if video_file and api_key:
             st.error(f"An error occurred: {e}")
         finally:
             # Cleanup files
-            for f in [video_path, "narration_audio.mp3", "final_output.mp4"]:
+            for f in [video_path, processed_video_path, "narration_audio.mp3", "final_output.mp4"]:
                 if os.path.exists(f):
                     try: os.remove(f)
                     except: pass
