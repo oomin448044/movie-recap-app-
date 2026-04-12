@@ -5,7 +5,7 @@ import asyncio
 import edge_tts
 import time
 import re
-import subprocess
+from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip
 
 # --- Configuration ---
 st.set_page_config(page_title="Burmese AI Movie Narrator Pro", layout="wide")
@@ -33,18 +33,6 @@ def find_working_model():
         return 'models/gemini-1.5-flash'
     except Exception:
         return 'models/gemini-1.5-flash'
-
-def get_duration(file_path):
-    """FFprobe ကိုသုံးပြီး file ရဲ့ duration ကို အတိအကျ စက္ကန့်နဲ့ ရယူပါသည်"""
-    try:
-        cmd = [
-            "ffprobe", "-v", "error", "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1", file_path
-        ]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        return float(result.stdout.strip())
-    except Exception:
-        return 0.0
 
 # --- Main App ---
 video_file = st.file_uploader("📁 Upload Movie Clip:", type=["mp4", "mov", "avi"])
@@ -106,60 +94,34 @@ if video_file and api_key:
                 audio_path = "narration_audio.mp3"
                 asyncio.run(generate_burmese_audio(recap_text, audio_path))
 
-                st.write("🎬 Finalizing Video & Audio Sync (Professional Mode)...")
+                st.write("🎬 Finalizing Video & Audio Sync (Simple Freeze)...")
                 
-                # ၁။ ဗီဒီယိုကို Constant Frame Rate (CFR) အဖြစ် အရင်ပြောင်းပါသည် (Sync ပိုကောင်းစေရန်)
-                cfr_video = "cfr_video.mp4"
-                subprocess.run([
-                    "ffmpeg", "-i", video_path, "-r", "24", "-c:v", "libx264", 
-                    "-pix_fmt", "yuv420p", "-preset", "ultrafast", cfr_video, "-y"
-                ], check=True)
+                # MoviePy ကို အသုံးပြုပြီး ရိုးရှင်းစွာ ပေါင်းစပ်ပါသည်
+                video_clip = VideoFileClip(video_path)
+                audio_clip = AudioFileClip(audio_path)
                 
-                v_dur = get_duration(cfr_video)
-                a_dur = get_duration(audio_path)
-                output_video_path = "final_output.mp4"
-                
-                if a_dur > v_dur:
-                    # အသံက ပိုရှည်နေလျှင် နောက်ဆုံး frame ကို freeze လုပ်ပါမည်
-                    freeze_duration = a_dur - v_dur
-                    last_frame_path = "last_frame.jpg"
-                    freeze_video_path = "freeze_video.mp4"
+                # အသံက ဗီဒီယိုထက် ရှည်နေလျှင်
+                if audio_clip.duration > video_clip.duration:
+                    # ၁။ ဗီဒီယိုရဲ့ နောက်ဆုံး frame ကို ပုံအဖြစ် ယူပါသည်
+                    last_frame = video_clip.get_frame(video_clip.duration - 0.01)
                     
-                    # ၂။ နောက်ဆုံး frame ကို ပုံအဖြစ် ထုတ်ယူပါသည်
-                    subprocess.run(["ffmpeg", "-sseof", "-0.1", "-i", cfr_video, "-update", "1", "-q:v", "1", last_frame_path, "-y"], check=True)
+                    # ၂။ အဲဒီပုံကို လိုအပ်သလောက် duration (freeze) ပေးလိုက်ပါသည်
+                    freeze_duration = audio_clip.duration - video_clip.duration
+                    freeze_clip = ImageClip(last_frame).set_duration(freeze_duration).set_start(video_clip.duration)
                     
-                    # ၃။ အဲဒီပုံကို freeze video အဖြစ် ဖန်တီးပါသည် (CFR 24fps အတိုင်း)
-                    subprocess.run([
-                        "ffmpeg", "-loop", "1", "-i", last_frame_path, 
-                        "-c:v", "libx264", "-t", str(freeze_duration), 
-                        "-pix_fmt", "yuv420p", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", 
-                        "-r", "24", freeze_video_path, "-y"
-                    ], check=True)
-                    
-                    # ၄။ မူရင်းဗီဒီယိုနဲ့ freeze video ကို ပေါင်းစပ်ပြီး အသံထည့်ပါသည်
-                    # filter_complex ကို သုံးပြီး timestamp များကို reset လုပ်ကာ အသံနဲ့ ညှိပါသည်
-                    cmd = [
-                        "ffmpeg", "-i", cfr_video, "-i", freeze_video_path, "-i", audio_path,
-                        "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
-                        "-map", "[v]", "-map", "2:a",
-                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "23",
-                        "-c:a", "aac", "-b:a", "128k", "-shortest", output_video_path, "-y"
-                    ]
+                    # ၃။ မူရင်းဗီဒီယိုနဲ့ freeze clip ကို ပေါင်းပါသည်
+                    final_video = CompositeVideoClip([video_clip, freeze_clip])
                 else:
-                    # ဗီဒီယိုက ပိုရှည်နေလျှင် အသံပြီးဆုံးချိန်မှာ ဗီဒီယိုကို ဖြတ်ပါသည်
-                    cmd = [
-                        "ffmpeg", "-i", cfr_video, "-i", audio_path,
-                        "-map", "0:v", "-map", "1:a",
-                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "23",
-                        "-c:a", "aac", "-b:a", "128k", "-t", str(a_dur), output_video_path, "-y"
-                    ]
+                    # ဗီဒီယိုက ပိုရှည်နေလျှင် အသံပြီးဆုံးချိန်မှာ ဖြတ်ပါသည်
+                    final_video = video_clip.subclip(0, audio_clip.duration)
                 
-                try:
-                    subprocess.run(cmd, check=True, capture_output=True)
-                except subprocess.CalledProcessError as e:
-                    st.error(f"FFmpeg Error: {e.stderr.decode()}")
-                    raise
-
+                # အသံထည့်ပါသည်
+                final_video = final_video.set_audio(audio_clip)
+                
+                output_video_path = "final_output.mp4"
+                # write_videofile လုပ်တဲ့အခါ logger=None ထည့်ပေးခြင်းဖြင့် error logs များကို ရှင်းလင်းစေပါသည်
+                final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac", fps=24, logger=None)
+                
                 status.update(label="✅ Complete!", state="complete")
 
             st.success("✨ Your Movie Recap is Ready!")
@@ -177,14 +139,15 @@ if video_file and api_key:
                     st.download_button("Download Final Video", f, file_name="burmese_movie_recap.mp4")
 
             # Cleanup
+            video_clip.close()
+            audio_clip.close()
             genai.delete_file(gen_file.name)
 
         except Exception as e:
             st.error(f"An error occurred: {e}")
         finally:
             # Cleanup files
-            temp_files = [video_path, cfr_video, audio_path, "last_frame.jpg", "freeze_video.mp4", "final_output.mp4"]
-            for f in temp_files:
+            for f in [video_path, audio_path, "final_output.mp4"]:
                 if os.path.exists(f):
                     try: os.remove(f)
                     except: pass
