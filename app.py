@@ -36,22 +36,33 @@ def blur_original_subtitles(image):
     image[h-bottom_h:h, 0:w] = blurred_bottom
     return image
 
-def get_best_model():
-    # အဆင်ပြေဆုံး model ကို အလိုအလျောက် ရွေးချယ်ပေးမည့် logic
-    available_models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']
-    for model_name in available_models:
-        try:
-            model = genai.GenerativeModel(model_name)
-            return model, model_name
-        except Exception:
-            continue
-    return None, None
+def optimize_video_for_ai(input_path, output_path):
+    """Gemini API Quota သက်သာစေရန် Video Resolution ကို လျှော့ချပေးသည့် Function"""
+    cap = cv2.VideoCapture(input_path)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    
+    # AI အတွက် 480p က လုံလောက်ပါတယ် (Token သက်သာစေပါတယ်)
+    target_height = 480
+    target_width = int(width * (target_height / height))
+    
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, fourcc, fps, (target_width, target_height))
+    
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret: break
+        resized_frame = cv2.resize(frame, (target_width, target_height))
+        out.write(resized_frame)
+        
+    cap.release()
+    out.release()
 
 # --- Main App ---
 video_file = st.file_uploader("📁 Upload Movie Clip:", type=["mp4", "mov", "avi"])
 
 if video_file and api_key:
-    # Save uploaded file with .mp4 suffix to avoid mime issues
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tfile:
         tfile.write(video_file.read())
         video_path = tfile.name
@@ -63,30 +74,42 @@ if video_file and api_key:
             genai.configure(api_key=api_key)
             
             with st.status("AI is processing...", expanded=True) as status:
-                st.write("🔍 Finding best available Gemini model...")
-                model, used_model_name = get_best_model()
-                if not model:
-                    st.error("❌ No supported Gemini models found.")
-                    st.stop()
+                # 1. Video Optimization
+                st.write("⚙️ Optimizing video for AI (Reducing tokens)...")
+                optimized_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
+                optimize_video_for_ai(video_path, optimized_path)
 
+                # 2. Upload Video
                 st.write("📤 Uploading video to AI...")
-                gen_file = genai.upload_file(path=video_path, mime_type="video/mp4")
+                gen_file = genai.upload_file(path=optimized_path, mime_type="video/mp4")
                 while gen_file.state.name == "PROCESSING":
                     time.sleep(2)
                     gen_file = genai.get_file(gen_file.name)
                 
+                # 3. Generate Script (Using stable model first to avoid quota issues)
                 st.write("📝 Generating natural Burmese storytelling script...")
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                
                 prompt = """
                 Analyze this movie clip and write a professional movie recap in BURMESE.
                 STYLE: Natural, engaging, human-like storytelling. 
-                Act as a professional movie narrator.
                 FORMAT:
                 [TITLES]
                 (Give 3 catchy titles)
                 [RECAP]
                 (The full story in Burmese)
                 """
-                response = model.generate_content([gen_file, prompt])
+                
+                # Quota Error ဖြစ်ခဲ့ရင် ၅ စက္ကန့်စောင့်ပြီး တစ်ခါ ပြန်ကြိုးစားပါမယ်
+                try:
+                    response = model.generate_content([gen_file, prompt])
+                except Exception as e:
+                    if "429" in str(e):
+                        st.warning("⚠️ Quota limit reached. Retrying in 10 seconds...")
+                        time.sleep(10)
+                        response = model.generate_content([gen_file, prompt])
+                    else: raise e
+
                 full_response = response.text
 
                 # Parsing
@@ -95,15 +118,16 @@ if video_file and api_key:
                 title_list = titles_match.group(1).strip().split('\n') if titles_match else ["Movie Recap"]
                 recap_text = recap_match.group(1).strip() if recap_match else full_response
 
+                # 4. Generate Audio
                 st.write("🎙️ Creating natural Burmese voiceover...")
                 audio_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
                 asyncio.run(generate_burmese_audio(recap_text, audio_temp.name))
 
+                # 5. Video Processing
                 st.write("🎬 Finalizing Video & Audio Sync...")
                 video_clip = VideoFileClip(video_path)
                 audio_clip = AudioFileClip(audio_temp.name)
 
-                # Mute & Blur (ImageMagick မလိုသော အခြေခံ moviepy functions များသာ သုံးထားသည်)
                 video_processed = video_clip.fl_image(blur_original_subtitles).without_audio()
 
                 if audio_clip.duration > video_processed.duration:
@@ -139,6 +163,7 @@ if video_file and api_key:
             video_clip.close()
             audio_clip.close()
             os.remove(audio_temp.name)
+            os.remove(optimized_path)
             genai.delete_file(gen_file.name)
 
         except Exception as e:
