@@ -9,14 +9,11 @@ from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVid
 from moviepy.config import change_settings
 
 # --- MoviePy FFMPEG Configuration (Streamlit Cloud Fix) ---
-# imageio_ffmpeg ကို သုံးပြီး FFMPEG binary path ကို အလိုအလျောက် ရှာဖွေခိုင်းပါသည်
-# ဒါက "failed to read the first frame" error ကို ဖြေရှင်းပေးနိုင်ပါသည်
 try:
     import imageio_ffmpeg
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
     change_settings({"FFMPEG_BINARY": ffmpeg_path})
-except Exception as e:
-    # imageio-ffmpeg မရှိလျှင် standard path များကို စစ်ဆေးပါသည်
+except Exception:
     for path in ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"]:
         if os.path.exists(path):
             change_settings({"FFMPEG_BINARY": path})
@@ -52,6 +49,12 @@ def find_working_model():
 # --- Main App ---
 video_file = st.file_uploader("📁 Upload Movie Clip:", type=["mp4", "mov", "avi"])
 
+# Initialize file paths to None to avoid NameError in finally block
+video_path = None
+audio_path = None
+output_video_path = None
+gen_file_name = None
+
 if video_file and api_key:
     video_path = "input_video.mp4"
     with open(video_path, "wb") as f:
@@ -70,6 +73,7 @@ if video_file and api_key:
 
                 st.write("📤 Uploading video to AI...")
                 gen_file = genai.upload_file(path=video_path, mime_type="video/mp4")
+                gen_file_name = gen_file.name
                 while gen_file.state.name == "PROCESSING":
                     time.sleep(2)
                     gen_file = genai.get_file(gen_file.name)
@@ -92,14 +96,14 @@ if video_file and api_key:
                 
                 try:
                     response = model.generate_content([gen_file, prompt])
+                    full_response = response.text
                 except Exception as e:
                     if "429" in str(e):
-                        st.warning("⚠️ Quota limit reached. Retrying in 20 seconds...")
-                        time.sleep(20)
-                        response = model.generate_content([gen_file, prompt])
-                    else: raise e
+                        st.error("⚠️ Gemini API Quota ပြည့်သွားပါပြီ။ ခဏစောင့်ပြီးမှ ပြန်ကြိုးစားပေးပါ။ (သို့မဟုတ်) API Key အသစ်တစ်ခု အသုံးပြုပါ။")
+                        st.stop()
+                    else:
+                        raise e
 
-                full_response = response.text
                 titles_match = re.search(r"\[TITLES\](.*?)\[RECAP\]", full_response, re.DOTALL)
                 recap_match = re.search(r"\[RECAP\](.*)", full_response, re.DOTALL)
                 title_list = titles_match.group(1).strip().split('\n') if titles_match else ["Movie Recap"]
@@ -134,8 +138,11 @@ if video_file and api_key:
                 final_video = final_video.set_audio(audio_clip)
                 
                 output_video_path = "final_output.mp4"
-                # write_videofile လုပ်တဲ့အခါ logger=None ထည့်ပေးခြင်းဖြင့် error logs များကို ရှင်းလင်းစေပါသည်
                 final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac", fps=24, logger=None)
+                
+                # Close clips to release files
+                video_clip.close()
+                audio_clip.close()
                 
                 status.update(label="✅ Complete!", state="complete")
 
@@ -153,16 +160,15 @@ if video_file and api_key:
                 with open(output_video_path, "rb") as f:
                     st.download_button("Download Final Video", f, file_name="burmese_movie_recap.mp4")
 
-            # Cleanup
-            video_clip.close()
-            audio_clip.close()
-            genai.delete_file(gen_file.name)
+            # Cleanup Gemini file
+            if gen_file_name:
+                genai.delete_file(gen_file_name)
 
         except Exception as e:
             st.error(f"An error occurred: {e}")
         finally:
-            # Cleanup files
-            for f in [video_path, audio_path, "final_output.mp4"]:
-                if os.path.exists(f):
+            # Safe cleanup of local files
+            for f in [video_path, audio_path, output_video_path]:
+                if f and os.path.exists(f):
                     try: os.remove(f)
                     except: pass
