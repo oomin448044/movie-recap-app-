@@ -36,28 +36,16 @@ def blur_original_subtitles(image):
     image[h-bottom_h:h, 0:w] = blurred_bottom
     return image
 
-def optimize_video_for_ai(input_path, output_path):
-    """Gemini API Quota သက်သာစေရန် Video Resolution ကို လျှော့ချပေးသည့် Function"""
-    cap = cv2.VideoCapture(input_path)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    
-    # AI အတွက် 480p က လုံလောက်ပါတယ် (Token သက်သာစေပါတယ်)
-    target_height = 480
-    target_width = int(width * (target_height / height))
-    
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (target_width, target_height))
-    
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret: break
-        resized_frame = cv2.resize(frame, (target_width, target_height))
-        out.write(resized_frame)
-        
-    cap.release()
-    out.release()
+def get_working_model():
+    """အလုပ်လုပ်နိုင်မည့် Model ကို အလိုအလျောက် ရှာဖွေပေးမည့် Function"""
+    # Gemini 1.5 Flash သို့မဟုတ် 2.0 Flash ကို စမ်းသပ်ပါမည်
+    for model_name in ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro']:
+        try:
+            model = genai.GenerativeModel(model_name)
+            return model, model_name
+        except Exception:
+            continue
+    return None, None
 
 # --- Main App ---
 video_file = st.file_uploader("📁 Upload Movie Clip:", type=["mp4", "mov", "avi"])
@@ -74,25 +62,27 @@ if video_file and api_key:
             genai.configure(api_key=api_key)
             
             with st.status("AI is processing...", expanded=True) as status:
-                # 1. Video Optimization
-                st.write("⚙️ Optimizing video for AI (Reducing tokens)...")
-                optimized_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
-                optimize_video_for_ai(video_path, optimized_path)
+                # 1. Model Selection
+                st.write("🔍 Finding best available Gemini model...")
+                model, used_model_name = get_working_model()
+                if not model:
+                    st.error("❌ No supported Gemini models found. Please check your API key.")
+                    st.stop()
+                st.write(f"✅ Using Model: {used_model_name}")
 
                 # 2. Upload Video
                 st.write("📤 Uploading video to AI...")
-                gen_file = genai.upload_file(path=optimized_path, mime_type="video/mp4")
+                gen_file = genai.upload_file(path=video_path, mime_type="video/mp4")
                 while gen_file.state.name == "PROCESSING":
                     time.sleep(2)
                     gen_file = genai.get_file(gen_file.name)
                 
-                # 3. Generate Script (Using stable model first to avoid quota issues)
+                # 3. Generate Script
                 st.write("📝 Generating natural Burmese storytelling script...")
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                
                 prompt = """
                 Analyze this movie clip and write a professional movie recap in BURMESE.
                 STYLE: Natural, engaging, human-like storytelling. 
+                Act as a professional movie narrator.
                 FORMAT:
                 [TITLES]
                 (Give 3 catchy titles)
@@ -100,13 +90,13 @@ if video_file and api_key:
                 (The full story in Burmese)
                 """
                 
-                # Quota Error ဖြစ်ခဲ့ရင် ၅ စက္ကန့်စောင့်ပြီး တစ်ခါ ပြန်ကြိုးစားပါမယ်
+                # Quota limit error (429) အတွက် retry logic ထည့်ထားပါသည်
                 try:
                     response = model.generate_content([gen_file, prompt])
                 except Exception as e:
                     if "429" in str(e):
-                        st.warning("⚠️ Quota limit reached. Retrying in 10 seconds...")
-                        time.sleep(10)
+                        st.warning("⚠️ Quota limit reached. Retrying in 15 seconds...")
+                        time.sleep(15)
                         response = model.generate_content([gen_file, prompt])
                     else: raise e
 
@@ -163,7 +153,6 @@ if video_file and api_key:
             video_clip.close()
             audio_clip.close()
             os.remove(audio_temp.name)
-            os.remove(optimized_path)
             genai.delete_file(gen_file.name)
 
         except Exception as e:
