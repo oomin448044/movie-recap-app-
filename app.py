@@ -6,6 +6,21 @@ import edge_tts
 import time
 import re
 from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip
+from moviepy.config import change_settings
+
+# --- MoviePy FFMPEG Configuration (Streamlit Cloud Fix) ---
+# imageio_ffmpeg ကို သုံးပြီး FFMPEG binary path ကို အလိုအလျောက် ရှာဖွေခိုင်းပါသည်
+# ဒါက "failed to read the first frame" error ကို ဖြေရှင်းပေးနိုင်ပါသည်
+try:
+    import imageio_ffmpeg
+    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+    change_settings({"FFMPEG_BINARY": ffmpeg_path})
+except Exception as e:
+    # imageio-ffmpeg မရှိလျှင် standard path များကို စစ်ဆေးပါသည်
+    for path in ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"]:
+        if os.path.exists(path):
+            change_settings({"FFMPEG_BINARY": path})
+            break
 
 # --- Configuration ---
 st.set_page_config(page_title="Burmese AI Movie Narrator Pro", layout="wide")
