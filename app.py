@@ -24,7 +24,6 @@ with st.sidebar:
 
 # --- Functions ---
 async def generate_burmese_audio(text, output_path):
-    # Rate ကို -5% ခန့်သာ ထားခြင်းဖြင့် မနှေးလွန်းဘဲ လူပြောသံနှင့် ပိုတူစေပါသည်
     communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural", rate="-5%", pitch="-2Hz")
     await communicate.save(output_path)
 
@@ -42,9 +41,11 @@ def find_working_model():
 video_file = st.file_uploader("📁 Upload Movie Clip:", type=["mp4", "mov", "avi"])
 
 if video_file and api_key:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tfile:
-        tfile.write(video_file.read())
-        video_path = tfile.name
+    # Temporary file creation with proper closing before usage
+    tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+    tfile.write(video_file.read())
+    video_path = tfile.name
+    tfile.close() # ဖိုင်ကို အရင်ပိတ်မှ MoviePy က ကောင်းကောင်းဖတ်နိုင်မှာပါ
 
     st.video(video_path)
 
@@ -53,19 +54,16 @@ if video_file and api_key:
             genai.configure(api_key=api_key)
             
             with st.status("AI is processing...", expanded=True) as status:
-                # 1. Automatic Model Discovery
                 st.write("🔍 Finding best available Gemini model...")
                 model_name = find_working_model()
                 model = genai.GenerativeModel(model_name)
 
-                # 2. Upload Video
                 st.write("📤 Uploading video to AI...")
                 gen_file = genai.upload_file(path=video_path, mime_type="video/mp4")
                 while gen_file.state.name == "PROCESSING":
                     time.sleep(2)
                     gen_file = genai.get_file(gen_file.name)
                 
-                # 3. Generate Script
                 st.write("📝 Generating natural Burmese narration...")
                 prompt = """
                 Analyze this movie clip and provide a BURMESE narration.
@@ -73,7 +71,7 @@ if video_file and api_key:
                 1. Translate and narrate only what is happening in the video.
                 2. NO introductions and NO conclusions.
                 3. STYLE: Act like a professional human storyteller. 
-                4. TONE: Conversational, emotional, and engaging (NOT reading a book).
+                4. TONE: Conversational, emotional, and engaging.
                 5. Use natural Burmese spoken language.
                 FORMAT:
                 [TITLES]
@@ -92,40 +90,29 @@ if video_file and api_key:
                     else: raise e
 
                 full_response = response.text
-
-                # Parsing
                 titles_match = re.search(r"\[TITLES\](.*?)\[RECAP\]", full_response, re.DOTALL)
                 recap_match = re.search(r"\[RECAP\](.*)", full_response, re.DOTALL)
                 title_list = titles_match.group(1).strip().split('\n') if titles_match else ["Movie Recap"]
                 recap_text = recap_match.group(1).strip() if recap_match else full_response
 
-                # 4. Generate Audio
                 st.write("🎙️ Creating natural Burmese voiceover...")
-                audio_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-                asyncio.run(generate_burmese_audio(recap_text, audio_temp.name))
+                audio_temp_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
+                asyncio.run(generate_burmese_audio(recap_text, audio_temp_path))
 
-                # 5. Video Processing & Strong Sync Logic (RE-ENGINEERED)
                 st.write("🎬 Finalizing Video & Audio Sync...")
                 video_clip = VideoFileClip(video_path)
-                audio_clip = AudioFileClip(audio_temp.name)
-
-                # Original audio ကို ဖျောက်ပါသည်
+                audio_clip = AudioFileClip(audio_temp_path)
                 video_muted = video_clip.without_audio()
 
                 # Sync logic: အသံက ပိုရှည်နေလျှင် နောက်ဆုံး Frame ကို Freeze လုပ်ပါမည်
                 if audio_clip.duration > video_muted.duration:
                     freeze_duration = audio_clip.duration - video_muted.duration
-                    # နောက်ဆုံး frame ကို တိကျစွာ ယူပါသည်
                     last_frame = video_muted.get_frame(video_muted.duration - 0.01)
-                    # နောက်ဆုံး frame ကို ImageClip အဖြစ် ပြောင်းပြီး အသံဆုံးတဲ့အထိ ထားပါသည်
                     freeze_clip = ImageClip(last_frame).set_duration(freeze_duration).set_start(video_muted.duration)
-                    # Video နှင့် Freeze Clip ကို ပေါင်းစပ်ပြီး Duration ကို အသံနဲ့ ကွတ်တိ ညှိပါသည်
                     video_final = CompositeVideoClip([video_muted, freeze_clip]).set_duration(audio_clip.duration)
                 else:
-                    # အသံက ပိုတိုနေလျှင် video ကို အသံအရှည်အတိုင်း တိကျစွာ ဖြတ်ပါသည်
                     video_final = video_muted.subclip(0, audio_clip.duration)
 
-                # အသံကို Video ထဲသို့ ထည့်သွင်းပါသည်
                 final_result = video_final.set_audio(audio_clip)
                 
                 output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
@@ -150,8 +137,11 @@ if video_file and api_key:
             # Cleanup
             video_clip.close()
             audio_clip.close()
-            os.remove(audio_temp.name)
+            if os.path.exists(audio_temp_path): os.remove(audio_temp_path)
+            if os.path.exists(output_video_path): os.remove(output_video_path)
             genai.delete_file(gen_file.name)
 
         except Exception as e:
             st.error(f"An error occurred: {e}")
+        finally:
+            if os.path.exists(video_path): os.remove(video_path)
