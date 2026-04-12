@@ -8,7 +8,21 @@ import re
 import cv2
 import numpy as np
 from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip
+from moviepy.config import change_settings
 import subprocess
+
+# --- MoviePy FFMPEG Configuration (Streamlit Cloud Fix) ---
+# imageio_ffmpeg ကို သုံးပြီး FFMPEG binary path ကို အလိုအလျောက် ရှာဖွေခိုင်းပါသည်
+try:
+    import imageio_ffmpeg
+    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+    change_settings({"FFMPEG_BINARY": ffmpeg_path})
+except ImportError:
+    # imageio-ffmpeg မရှိလျှင် standard path များကို စစ်ဆေးပါသည်
+    for path in ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"]:
+        if os.path.exists(path):
+            change_settings({"FFMPEG_BINARY": path})
+            break
 
 # --- Configuration ---
 st.set_page_config(page_title="Burmese AI Movie Narrator Pro", layout="wide")
@@ -24,7 +38,6 @@ with st.sidebar:
 
 # --- Functions ---
 async def generate_burmese_audio(text, output_path):
-    # Rate ကို -5% ခန့်သာ ထားခြင်းဖြင့် မနှေးလွန်းဘဲ လူပြောသံနှင့် ပိုတူစေပါသည်
     communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural", rate="-5%", pitch="-2Hz")
     await communicate.save(output_path)
 
@@ -42,7 +55,6 @@ def find_working_model():
 video_file = st.file_uploader("📁 Upload Movie Clip:", type=["mp4", "mov", "avi"])
 
 if video_file and api_key:
-    # ပိုမိုတည်ငြိမ်သော ဖိုင်သိမ်းဆည်းမှုစနစ်
     video_path = "input_video.mp4"
     with open(video_path, "wb") as f:
         f.write(video_file.read())
@@ -101,15 +113,17 @@ if video_file and api_key:
 
                 st.write("🎬 Finalizing Video & Audio Sync...")
                 
-                # Convert video to a compatible format using ffmpeg before MoviePy processes it
+                # Convert video to a compatible format using ffmpeg
                 processed_video_path = "processed_input_video.mp4"
                 try:
-                    subprocess.run(["ffmpeg", "-i", video_path, "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-c:a", "aac", "-b:a", "128k", processed_video_path, "-y"], check=True)
+                    # imageio_ffmpeg binary path ကို သုံးပြီး subprocess run ပါသည်
+                    ffmpeg_bin = ffmpeg_path if 'ffmpeg_path' in locals() else "ffmpeg"
+                    subprocess.run([ffmpeg_bin, "-i", video_path, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "medium", "-crf", "23", "-c:a", "aac", "-b:a", "128k", processed_video_path, "-y"], check=True)
                 except subprocess.CalledProcessError as e:
                     st.error(f"FFmpeg video processing failed: {e}")
                     raise
 
-                # MoviePy ဖြင့် ဖိုင်ကို တိုက်ရိုက်ဖွင့်ပါသည်
+                # MoviePy ဖြင့် ဖိုင်ကို ဖွင့်ပါသည်
                 video_clip = VideoFileClip(processed_video_path)
                 audio_clip = AudioFileClip(audio_path)
                 video_muted = video_clip.without_audio()
@@ -117,9 +131,8 @@ if video_file and api_key:
                 # Sync logic: အသံက ပိုရှည်နေလျှင် နောက်ဆုံး Frame ကို Freeze လုပ်ပါမည်
                 if audio_clip.duration > video_muted.duration:
                     freeze_duration = audio_clip.duration - video_muted.duration
-                    # Ensure freeze_duration is not negative
                     if freeze_duration < 0: freeze_duration = 0
-                    last_frame = video_muted.get_frame(video_muted.duration - 0.01) if video_muted.duration > 0.01 else np.zeros((100, 100, 3), dtype=np.uint8) # Fallback for very short videos
+                    last_frame = video_muted.get_frame(video_muted.duration - 0.01) if video_muted.duration > 0.01 else np.zeros((100, 100, 3), dtype=np.uint8)
                     freeze_clip = ImageClip(last_frame).set_duration(freeze_duration).set_start(video_muted.duration)
                     video_final = CompositeVideoClip([video_muted, freeze_clip]).set_duration(audio_clip.duration)
                 else:
@@ -128,7 +141,7 @@ if video_file and api_key:
                 final_result = video_final.set_audio(audio_clip)
                 
                 output_video_path = "final_output.mp4"
-                final_result.write_videofile(output_video_path, codec="libx264", audio_codec="aac", fps=24)
+                final_result.write_videofile(output_video_path, codec="libx264", audio_codec="aac", fps=24, logger=None)
                 
                 status.update(label="✅ Complete!", state="complete")
 
