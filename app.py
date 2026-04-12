@@ -24,28 +24,17 @@ with st.sidebar:
 
 # --- Functions ---
 async def generate_burmese_audio(text, output_path):
-    # အသံကို ပိုနှေးစေပြီး AI အသံထက် လူပြောသံနဲ့ ပိုတူစေရန် ညှိထားပါသည်
+    # အသံကို ပိုနှေးစေပြီး လူပြောသံနဲ့ ပိုတူစေရန် ညှိထားပါသည်
     communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural", rate="-15%", pitch="-5Hz")
     await communicate.save(output_path)
-
-def blur_original_subtitles(image):
-    h, w, _ = image.shape
-    bottom_h = int(h * 0.15)
-    bottom_part = image[h-bottom_h:h, 0:w]
-    blurred_bottom = cv2.GaussianBlur(bottom_part, (51, 51), 0)
-    image[h-bottom_h:h, 0:w] = blurred_bottom
-    return image
 
 def find_working_model():
     """သင့် API Key ဖြင့် အလုပ်လုပ်နိုင်သော Model ကို အလိုအလျောက် ရှာဖွေပေးမည့် Function"""
     try:
-        # လက်ရှိ API Key ဖြင့် သုံးနိုင်သော model အားလုံးကို list လုပ်ပါသည်
         models = genai.list_models()
         for m in models:
-            # generateContent ကို support လုပ်ပြီး flash model ဖြစ်သော model ကို ရှာပါသည်
             if 'generateContent' in m.supported_generation_methods and 'flash' in m.name:
                 return m.name
-        # အကယ်၍ list ထဲတွင် မတွေ့ပါက default တစ်ခုကို ပေးပါသည်
         return 'models/gemini-1.5-flash'
     except Exception:
         return 'models/gemini-1.5-flash'
@@ -54,6 +43,7 @@ def find_working_model():
 video_file = st.file_uploader("📁 Upload Movie Clip:", type=["mp4", "mov", "avi"])
 
 if video_file and api_key:
+    # Save uploaded file with .mp4 suffix
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tfile:
         tfile.write(video_file.read())
         video_path = tfile.name
@@ -66,7 +56,7 @@ if video_file and api_key:
             
             with st.status("AI is processing...", expanded=True) as status:
                 # 1. Automatic Model Discovery
-                st.write("🔍 Discovering available Gemini models for your API Key...")
+                st.write("🔍 Discovering available Gemini models...")
                 model_name = find_working_model()
                 st.write(f"✅ Selected Model: {model_name}")
                 model = genai.GenerativeModel(model_name)
@@ -83,6 +73,7 @@ if video_file and api_key:
                 prompt = """
                 Analyze this movie clip and write a professional movie recap in BURMESE.
                 STYLE: Natural, engaging, human-like storytelling. 
+                Act as a professional movie narrator.
                 FORMAT:
                 [TITLES]
                 (Give 3 catchy titles)
@@ -90,7 +81,6 @@ if video_file and api_key:
                 (The full story in Burmese)
                 """
                 
-                # Quota limit (429) အတွက် retry logic
                 try:
                     response = model.generate_content([gen_file, prompt])
                 except Exception as e:
@@ -105,7 +95,7 @@ if video_file and api_key:
                 # Parsing
                 titles_match = re.search(r"\[TITLES\](.*?)\[RECAP\]", full_response, re.DOTALL)
                 recap_match = re.search(r"\[RECAP\](.*)", full_response, re.DOTALL)
-                title_list = titles_match.group(1).strip().split('\n') if titles_match else ["Movie Recap"]
+                title_list = titles_match.group(1).strip().split('\n') if titles_match else ["Movie Recap 1", "Movie Recap 2", "Movie Recap 3"]
                 recap_text = recap_match.group(1).strip() if recap_match else full_response
 
                 # 4. Generate Audio
@@ -113,12 +103,13 @@ if video_file and api_key:
                 audio_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
                 asyncio.run(generate_burmese_audio(recap_text, audio_temp.name))
 
-                # 5. Video Processing
+                # 5. Video Processing (No Blur)
                 st.write("🎬 Finalizing Video & Audio Sync...")
                 video_clip = VideoFileClip(video_path)
                 audio_clip = AudioFileClip(audio_temp.name)
 
-                video_processed = video_clip.fl_image(blur_original_subtitles).without_audio()
+                # Blur မလုပ်ဘဲ မူရင်းအသံကိုသာ ဖျောက်ပါသည်
+                video_processed = video_clip.without_audio()
 
                 if audio_clip.duration > video_processed.duration:
                     freeze_duration = audio_clip.duration - video_processed.duration
