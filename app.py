@@ -36,16 +36,19 @@ def blur_original_subtitles(image):
     image[h-bottom_h:h, 0:w] = blurred_bottom
     return image
 
-def get_working_model():
-    """အလုပ်လုပ်နိုင်မည့် Model ကို အလိုအလျောက် ရှာဖွေပေးမည့် Function"""
-    # Gemini 1.5 Flash သို့မဟုတ် 2.0 Flash ကို စမ်းသပ်ပါမည်
-    for model_name in ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro']:
-        try:
-            model = genai.GenerativeModel(model_name)
-            return model, model_name
-        except Exception:
-            continue
-    return None, None
+def find_working_model():
+    """သင့် API Key ဖြင့် အလုပ်လုပ်နိုင်သော Model ကို အလိုအလျောက် ရှာဖွေပေးမည့် Function"""
+    try:
+        # လက်ရှိ API Key ဖြင့် သုံးနိုင်သော model အားလုံးကို list လုပ်ပါသည်
+        models = genai.list_models()
+        for m in models:
+            # generateContent ကို support လုပ်ပြီး flash model ဖြစ်သော model ကို ရှာပါသည်
+            if 'generateContent' in m.supported_generation_methods and 'flash' in m.name:
+                return m.name
+        # အကယ်၍ list ထဲတွင် မတွေ့ပါက default တစ်ခုကို ပေးပါသည်
+        return 'models/gemini-1.5-flash'
+    except Exception:
+        return 'models/gemini-1.5-flash'
 
 # --- Main App ---
 video_file = st.file_uploader("📁 Upload Movie Clip:", type=["mp4", "mov", "avi"])
@@ -62,13 +65,11 @@ if video_file and api_key:
             genai.configure(api_key=api_key)
             
             with st.status("AI is processing...", expanded=True) as status:
-                # 1. Model Selection
-                st.write("🔍 Finding best available Gemini model...")
-                model, used_model_name = get_working_model()
-                if not model:
-                    st.error("❌ No supported Gemini models found. Please check your API key.")
-                    st.stop()
-                st.write(f"✅ Using Model: {used_model_name}")
+                # 1. Automatic Model Discovery
+                st.write("🔍 Discovering available Gemini models for your API Key...")
+                model_name = find_working_model()
+                st.write(f"✅ Selected Model: {model_name}")
+                model = genai.GenerativeModel(model_name)
 
                 # 2. Upload Video
                 st.write("📤 Uploading video to AI...")
@@ -82,7 +83,6 @@ if video_file and api_key:
                 prompt = """
                 Analyze this movie clip and write a professional movie recap in BURMESE.
                 STYLE: Natural, engaging, human-like storytelling. 
-                Act as a professional movie narrator.
                 FORMAT:
                 [TITLES]
                 (Give 3 catchy titles)
@@ -90,13 +90,13 @@ if video_file and api_key:
                 (The full story in Burmese)
                 """
                 
-                # Quota limit error (429) အတွက် retry logic ထည့်ထားပါသည်
+                # Quota limit (429) အတွက် retry logic
                 try:
                     response = model.generate_content([gen_file, prompt])
                 except Exception as e:
                     if "429" in str(e):
-                        st.warning("⚠️ Quota limit reached. Retrying in 15 seconds...")
-                        time.sleep(15)
+                        st.warning("⚠️ Quota limit reached. Retrying in 20 seconds...")
+                        time.sleep(20)
                         response = model.generate_content([gen_file, prompt])
                     else: raise e
 
