@@ -8,7 +8,7 @@ import time
 import re
 import cv2
 import numpy as np
-from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, concatenate_videoclips, CompositeVideoClip
+from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip
 
 # --- Configuration ---
 st.set_page_config(page_title="Burmese AI Movie Narrator Pro", layout="wide")
@@ -65,7 +65,7 @@ if video_file and api_key:
                     time.sleep(2)
                     gen_file = genai.get_file(gen_file.name)
                 
-                # 3. Generate Script (Improved Prompt for Human-like Voice)
+                # 3. Generate Script
                 st.write("📝 Generating natural Burmese narration...")
                 prompt = """
                 Analyze this movie clip and provide a BURMESE narration.
@@ -74,7 +74,7 @@ if video_file and api_key:
                 2. NO introductions and NO conclusions.
                 3. STYLE: Act like a professional human storyteller. 
                 4. TONE: Conversational, emotional, and engaging (NOT reading a book).
-                5. Use natural Burmese spoken language (e.g., use 'သူက' instead of formal terms).
+                5. Use natural Burmese spoken language.
                 FORMAT:
                 [TITLES]
                 (3 catchy titles)
@@ -104,7 +104,7 @@ if video_file and api_key:
                 audio_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
                 asyncio.run(generate_burmese_audio(recap_text, audio_temp.name))
 
-                # 5. Video Processing & Strong Sync Logic
+                # 5. Video Processing & Strong Sync Logic (RE-ENGINEERED)
                 st.write("🎬 Finalizing Video & Audio Sync...")
                 video_clip = VideoFileClip(video_path)
                 audio_clip = AudioFileClip(audio_temp.name)
@@ -115,16 +115,17 @@ if video_file and api_key:
                 # Sync logic: အသံက ပိုရှည်နေလျှင် နောက်ဆုံး Frame ကို Freeze လုပ်ပါမည်
                 if audio_clip.duration > video_muted.duration:
                     freeze_duration = audio_clip.duration - video_muted.duration
-                    # နောက်ဆုံး frame ကို ယူပါသည်
-                    last_frame = video_muted.get_frame(video_muted.duration - 0.1)
-                    # နောက်ဆုံး frame ကို ImageClip အဖြစ် ပြောင်းပြီး ကျန်ရှိသော duration အထိ ထားပါသည်
+                    # နောက်ဆုံး frame ကို တိကျစွာ ယူပါသည်
+                    last_frame = video_muted.get_frame(video_muted.duration - 0.01)
+                    # နောက်ဆုံး frame ကို ImageClip အဖြစ် ပြောင်းပြီး အသံဆုံးတဲ့အထိ ထားပါသည်
                     freeze_clip = ImageClip(last_frame).set_duration(freeze_duration).set_start(video_muted.duration)
-                    # Video နှင့် Freeze Clip ကို ပေါင်းစပ်ပါသည်
-                    video_final = CompositeVideoClip([video_muted, freeze_clip])
+                    # Video နှင့် Freeze Clip ကို ပေါင်းစပ်ပြီး Duration ကို အသံနဲ့ ကွတ်တိ ညှိပါသည်
+                    video_final = CompositeVideoClip([video_muted, freeze_clip]).set_duration(audio_clip.duration)
                 else:
-                    # အသံက ပိုတိုနေလျှင် video ကို အသံအရှည်အတိုင်း ဖြတ်ပါသည်
+                    # အသံက ပိုတိုနေလျှင် video ကို အသံအရှည်အတိုင်း တိကျစွာ ဖြတ်ပါသည်
                     video_final = video_muted.subclip(0, audio_clip.duration)
 
+                # အသံကို Video ထဲသို့ ထည့်သွင်းပါသည်
                 final_result = video_final.set_audio(audio_clip)
                 
                 output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
