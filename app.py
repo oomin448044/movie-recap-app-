@@ -3,7 +3,6 @@ import google.generativeai as genai
 import os
 import asyncio
 import edge_tts
-import tempfile
 import time
 import re
 import cv2
@@ -24,6 +23,7 @@ with st.sidebar:
 
 # --- Functions ---
 async def generate_burmese_audio(text, output_path):
+    # Rate ကို -5% ခန့်သာ ထားခြင်းဖြင့် မနှေးလွန်းဘဲ လူပြောသံနှင့် ပိုတူစေပါသည်
     communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural", rate="-5%", pitch="-2Hz")
     await communicate.save(output_path)
 
@@ -41,11 +41,10 @@ def find_working_model():
 video_file = st.file_uploader("📁 Upload Movie Clip:", type=["mp4", "mov", "avi"])
 
 if video_file and api_key:
-    # Temporary file creation with proper closing before usage
-    tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-    tfile.write(video_file.read())
-    video_path = tfile.name
-    tfile.close() # ဖိုင်ကို အရင်ပိတ်မှ MoviePy က ကောင်းကောင်းဖတ်နိုင်မှာပါ
+    # ပိုမိုတည်ငြိမ်သော ဖိုင်သိမ်းဆည်းမှုစနစ်
+    video_path = "input_video.mp4"
+    with open(video_path, "wb") as f:
+        f.write(video_file.read())
 
     st.video(video_path)
 
@@ -96,12 +95,13 @@ if video_file and api_key:
                 recap_text = recap_match.group(1).strip() if recap_match else full_response
 
                 st.write("🎙️ Creating natural Burmese voiceover...")
-                audio_temp_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
-                asyncio.run(generate_burmese_audio(recap_text, audio_temp_path))
+                audio_path = "narration_audio.mp3"
+                asyncio.run(generate_burmese_audio(recap_text, audio_path))
 
                 st.write("🎬 Finalizing Video & Audio Sync...")
+                # MoviePy ဖြင့် ဖိုင်ကို တိုက်ရိုက်ဖွင့်ပါသည်
                 video_clip = VideoFileClip(video_path)
-                audio_clip = AudioFileClip(audio_temp_path)
+                audio_clip = AudioFileClip(audio_path)
                 video_muted = video_clip.without_audio()
 
                 # Sync logic: အသံက ပိုရှည်နေလျှင် နောက်ဆုံး Frame ကို Freeze လုပ်ပါမည်
@@ -115,7 +115,7 @@ if video_file and api_key:
 
                 final_result = video_final.set_audio(audio_clip)
                 
-                output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
+                output_video_path = "final_output.mp4"
                 final_result.write_videofile(output_video_path, codec="libx264", audio_codec="aac", fps=24)
                 
                 status.update(label="✅ Complete!", state="complete")
@@ -137,11 +137,13 @@ if video_file and api_key:
             # Cleanup
             video_clip.close()
             audio_clip.close()
-            if os.path.exists(audio_temp_path): os.remove(audio_temp_path)
-            if os.path.exists(output_video_path): os.remove(output_video_path)
             genai.delete_file(gen_file.name)
 
         except Exception as e:
             st.error(f"An error occurred: {e}")
         finally:
-            if os.path.exists(video_path): os.remove(video_path)
+            # Cleanup files
+            for f in [video_path, "narration_audio.mp3", "final_output.mp4"]:
+                if os.path.exists(f):
+                    try: os.remove(f)
+                    except: pass
