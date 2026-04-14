@@ -6,21 +6,6 @@ import edge_tts
 import time
 import re
 import subprocess
-from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip
-from moviepy.config import change_settings
-
-# --- MoviePy FFMPEG Configuration (Streamlit Cloud Fix) ---
-# imageio_ffmpeg ကို သုံးပြီး FFMPEG binary path ကို အလိုအလျောက် ရှာဖွေခိုင်းပါသည်
-try:
-    import imageio_ffmpeg
-    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
-    change_settings({"FFMPEG_BINARY": ffmpeg_path})
-except Exception:
-    # imageio-ffmpeg မရှိလျှင် standard path များကို စစ်ဆေးပါသည်
-    for path in ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"]:
-        if os.path.exists(path):
-            change_settings({"FFMPEG_BINARY": path})
-            break
 
 # --- Configuration ---
 st.set_page_config(page_title="Burmese AI Movie Narrator Pro", layout="wide")
@@ -59,7 +44,7 @@ def get_precise_duration(file_path):
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         return float(result.stdout.strip())
     except Exception:
-        return None
+        return 0.0
 
 # --- Main App ---
 video_file = st.file_uploader("📁 Upload Movie Clip:", type=["mp4", "mov", "avi"])
@@ -128,43 +113,53 @@ if video_file and api_key:
                 audio_path = "narration_audio.mp3"
                 asyncio.run(generate_burmese_audio(recap_text, audio_path))
 
-                st.write("🎬 Finalizing Video & Audio Sync (Hybrid Mode)...")
+                st.write("🎬 Finalizing Video & Audio Sync (FFmpeg Direct Mode)...")
                 
-                # MoviePy ဖြင့် ဗီဒီယိုနှင့် အသံကို ဖွင့်ပါသည်
-                video_clip = VideoFileClip(video_path)
-                audio_clip = AudioFileClip(audio_path)
+                # Duration များကို FFprobe ဖြင့် အတိအကျ စစ်ဆေးပါသည်
+                v_dur = get_precise_duration(video_path)
+                a_dur = get_precise_duration(audio_path)
+                output_video_path = "final_output.mp4"
                 
-                # Duration များကို FFprobe ဖြင့် ထပ်မံစစ်ဆေးပါသည် (ပိုမိုတိကျစေရန်)
-                v_dur_precise = get_precise_duration(video_path) or video_clip.duration
-                a_dur_precise = get_precise_duration(audio_path) or audio_clip.duration
-                
-                # အသံက ဗီဒီယိုထက် ရှည်နေလျှင် (Freeze Logic)
-                if a_dur_precise > v_dur_precise:
-                    # ၁။ ဗီဒီယိုရဲ့ နောက်ဆုံး frame ကို ပုံအဖြစ် ယူပါသည်
-                    last_frame = video_clip.get_frame(video_clip.duration - 0.01)
+                if a_dur > v_dur:
+                    # အသံက ပိုရှည်နေလျှင် (Freeze Logic)
+                    freeze_duration = a_dur - v_dur
+                    last_frame_path = "last_frame.jpg"
+                    freeze_video_path = "freeze_video.mp4"
                     
-                    # ၂။ အဲဒီပုံကို လိုအပ်သလောက် duration (freeze) ပေးလိုက်ပါသည်
-                    freeze_duration = a_dur_precise - v_dur_precise
-                    freeze_clip = ImageClip(last_frame).set_duration(freeze_duration).set_start(v_dur_precise)
+                    # ၁။ နောက်ဆုံး frame ကို ပုံအဖြစ် ထုတ်ယူပါသည်
+                    subprocess.run(["ffmpeg", "-sseof", "-0.1", "-i", video_path, "-update", "1", "-q:v", "1", last_frame_path, "-y"], check=True)
                     
-                    # ၃။ မူရင်းဗီဒီယိုနဲ့ freeze clip ကို ပေါင်းပါသည်
-                    final_video = CompositeVideoClip([video_clip, freeze_clip])
-                    final_video.duration = a_dur_precise
+                    # ၂။ အဲဒီပုံကို freeze video အဖြစ် ဖန်တီးပါသည် (24fps)
+                    subprocess.run([
+                        "ffmpeg", "-loop", "1", "-i", last_frame_path, 
+                        "-c:v", "libx264", "-t", str(freeze_duration), 
+                        "-pix_fmt", "yuv420p", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", 
+                        "-r", "24", freeze_video_path, "-y"
+                    ], check=True)
+                    
+                    # ၃။ မူရင်းဗီဒီယိုနဲ့ freeze video ကို ပေါင်းစပ်ပြီး အသံထည့်ပါသည်
+                    cmd = [
+                        "ffmpeg", "-i", video_path, "-i", freeze_video_path, "-i", audio_path,
+                        "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+                        "-map", "[v]", "-map", "2:a",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "23",
+                        "-c:a", "aac", "-b:a", "128k", "-shortest", output_video_path, "-y"
+                    ]
                 else:
                     # ဗီဒီယိုက ပိုရှည်နေလျှင် အသံပြီးဆုံးချိန်မှာ ဖြတ်ပါသည်
-                    final_video = video_clip.subclip(0, a_dur_precise)
+                    cmd = [
+                        "ffmpeg", "-i", video_path, "-i", audio_path,
+                        "-map", "0:v", "-map", "1:a",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "23",
+                        "-c:a", "aac", "-b:a", "128k", "-t", str(a_dur), output_video_path, "-y"
+                    ]
                 
-                # အသံထည့်ပါသည်
-                final_video = final_video.set_audio(audio_clip)
-                
-                output_video_path = "final_output.mp4"
-                # write_videofile လုပ်တဲ့အခါ logger=None ထည့်ပေးခြင်းဖြင့် error logs များကို ရှင်းလင်းစေပါသည်
-                final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac", fps=24, logger=None)
-                
-                # Close clips to release files
-                video_clip.close()
-                audio_clip.close()
-                
+                try:
+                    subprocess.run(cmd, check=True, capture_output=True)
+                except subprocess.CalledProcessError as e:
+                    st.error(f"FFmpeg Error: {e.stderr.decode()}")
+                    raise
+
                 status.update(label="✅ Complete!", state="complete")
 
             st.success("✨ Your Movie Recap is Ready!")
@@ -189,7 +184,8 @@ if video_file and api_key:
             st.error(f"An error occurred: {e}")
         finally:
             # Safe cleanup of local files
-            for f in [video_path, audio_path, output_video_path]:
+            temp_files = [video_path, audio_path, "last_frame.jpg", "freeze_video.mp4", "final_output.mp4"]
+            for f in temp_files:
                 if f and os.path.exists(f):
                     try: os.remove(f)
                     except: pass
