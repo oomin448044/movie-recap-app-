@@ -113,43 +113,35 @@ if video_file and api_key:
                 audio_path = "narration_audio.mp3"
                 asyncio.run(generate_burmese_audio(recap_text, audio_path))
 
-                st.write("🎬 Finalizing Video & Audio Sync (FFmpeg Direct Mode)...")
+                st.write("🎬 Finalizing Video & Audio Sync (Professional Mode)...")
                 
                 # Duration များကို FFprobe ဖြင့် အတိအကျ စစ်ဆေးပါသည်
                 v_dur = get_precise_duration(video_path)
                 a_dur = get_precise_duration(audio_path)
                 output_video_path = "final_output.mp4"
                 
+                # Professional Sync Logic:
+                # ၁။ ဗီဒီယိုကို အရင်ဆုံး Constant Frame Rate (24fps) အဖြစ် ပြောင်းပါသည်
+                # ၂။ အသံရှည်နေလျှင် ဗီဒီယိုရဲ့ နောက်ဆုံး frame ကို freeze လုပ်ပါသည် (tpad filter)
+                # ၃။ အသံနဲ့ ဗီဒီယိုကို တစ်ခါတည်း (Single Pass) နဲ့ Re-encode လုပ်ပြီး ပေါင်းစပ်ပါသည်
+                
                 if a_dur > v_dur:
-                    # အသံက ပိုရှည်နေလျှင် (Freeze Logic)
-                    freeze_duration = a_dur - v_dur
-                    last_frame_path = "last_frame.jpg"
-                    freeze_video_path = "freeze_video.mp4"
-                    
-                    # ၁။ နောက်ဆုံး frame ကို ပုံအဖြစ် ထုတ်ယူပါသည်
-                    subprocess.run(["ffmpeg", "-sseof", "-0.1", "-i", video_path, "-update", "1", "-q:v", "1", last_frame_path, "-y"], check=True)
-                    
-                    # ၂။ အဲဒီပုံကို freeze video အဖြစ် ဖန်တီးပါသည် (24fps)
-                    subprocess.run([
-                        "ffmpeg", "-loop", "1", "-i", last_frame_path, 
-                        "-c:v", "libx264", "-t", str(freeze_duration), 
-                        "-pix_fmt", "yuv420p", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", 
-                        "-r", "24", freeze_video_path, "-y"
-                    ], check=True)
-                    
-                    # ၃။ မူရင်းဗီဒီယိုနဲ့ freeze video ကို ပေါင်းစပ်ပြီး အသံထည့်ပါသည်
+                    # အသံရှည်နေလျှင် (Freeze Logic)
+                    # tpad filter ကို သုံးပြီး ဗီဒီယိုရဲ့ နောက်ဆုံး frame ကို အသံပြီးဆုံးတဲ့အထိ ဆွဲဆန့်ပါသည်
                     cmd = [
-                        "ffmpeg", "-i", video_path, "-i", freeze_video_path, "-i", audio_path,
-                        "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
-                        "-map", "[v]", "-map", "2:a",
+                        "ffmpeg", "-i", video_path, "-i", audio_path,
+                        "-filter_complex", f"[0:v]fps=24,tpad=stop_mode=clone:stop_duration={a_dur-v_dur}[v]",
+                        "-map", "[v]", "-map", "1:a",
                         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "23",
                         "-c:a", "aac", "-b:a", "128k", "-shortest", output_video_path, "-y"
                     ]
                 else:
-                    # ဗီဒီယိုက ပိုရှည်နေလျှင် အသံပြီးဆုံးချိန်မှာ ဖြတ်ပါသည်
+                    # ဗီဒီယိုရှည်နေလျှင် (Trim Logic)
+                    # အသံပြီးဆုံးချိန်မှာ ဗီဒီယိုကို ဖြတ်ပါသည်
                     cmd = [
                         "ffmpeg", "-i", video_path, "-i", audio_path,
-                        "-map", "0:v", "-map", "1:a",
+                        "-filter_complex", "[0:v]fps=24[v]",
+                        "-map", "[v]", "-map", "1:a",
                         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "23",
                         "-c:a", "aac", "-b:a", "128k", "-t", str(a_dur), output_video_path, "-y"
                     ]
@@ -184,7 +176,7 @@ if video_file and api_key:
             st.error(f"An error occurred: {e}")
         finally:
             # Safe cleanup of local files
-            temp_files = [video_path, audio_path, "last_frame.jpg", "freeze_video.mp4", "final_output.mp4"]
+            temp_files = [video_path, audio_path, output_video_path]
             for f in temp_files:
                 if f and os.path.exists(f):
                     try: os.remove(f)
