@@ -5,15 +5,18 @@ import asyncio
 import edge_tts
 import time
 import re
+import subprocess
 from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip
 from moviepy.config import change_settings
 
 # --- MoviePy FFMPEG Configuration (Streamlit Cloud Fix) ---
+# imageio_ffmpeg ကို သုံးပြီး FFMPEG binary path ကို အလိုအလျောက် ရှာဖွေခိုင်းပါသည်
 try:
     import imageio_ffmpeg
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
     change_settings({"FFMPEG_BINARY": ffmpeg_path})
 except Exception:
+    # imageio-ffmpeg မရှိလျှင် standard path များကို စစ်ဆေးပါသည်
     for path in ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"]:
         if os.path.exists(path):
             change_settings({"FFMPEG_BINARY": path})
@@ -45,6 +48,18 @@ def find_working_model():
         return 'models/gemini-1.5-flash'
     except Exception:
         return 'models/gemini-1.5-flash'
+
+def get_precise_duration(file_path):
+    """FFprobe ကိုသုံးပြီး file ရဲ့ duration ကို အတိအကျ စက္ကန့်နဲ့ ရယူပါသည်"""
+    try:
+        cmd = [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", file_path
+        ]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        return float(result.stdout.strip())
+    except Exception:
+        return None
 
 # --- Main App ---
 video_file = st.file_uploader("📁 Upload Movie Clip:", type=["mp4", "mov", "avi"])
@@ -113,31 +128,37 @@ if video_file and api_key:
                 audio_path = "narration_audio.mp3"
                 asyncio.run(generate_burmese_audio(recap_text, audio_path))
 
-                st.write("🎬 Finalizing Video & Audio Sync (Simple Freeze)...")
+                st.write("🎬 Finalizing Video & Audio Sync (Hybrid Mode)...")
                 
-                # MoviePy ကို အသုံးပြုပြီး ရိုးရှင်းစွာ ပေါင်းစပ်ပါသည်
+                # MoviePy ဖြင့် ဗီဒီယိုနှင့် အသံကို ဖွင့်ပါသည်
                 video_clip = VideoFileClip(video_path)
                 audio_clip = AudioFileClip(audio_path)
                 
-                # အသံက ဗီဒီယိုထက် ရှည်နေလျှင်
-                if audio_clip.duration > video_clip.duration:
+                # Duration များကို FFprobe ဖြင့် ထပ်မံစစ်ဆေးပါသည် (ပိုမိုတိကျစေရန်)
+                v_dur_precise = get_precise_duration(video_path) or video_clip.duration
+                a_dur_precise = get_precise_duration(audio_path) or audio_clip.duration
+                
+                # အသံက ဗီဒီယိုထက် ရှည်နေလျှင် (Freeze Logic)
+                if a_dur_precise > v_dur_precise:
                     # ၁။ ဗီဒီယိုရဲ့ နောက်ဆုံး frame ကို ပုံအဖြစ် ယူပါသည်
                     last_frame = video_clip.get_frame(video_clip.duration - 0.01)
                     
                     # ၂။ အဲဒီပုံကို လိုအပ်သလောက် duration (freeze) ပေးလိုက်ပါသည်
-                    freeze_duration = audio_clip.duration - video_clip.duration
-                    freeze_clip = ImageClip(last_frame).set_duration(freeze_duration).set_start(video_clip.duration)
+                    freeze_duration = a_dur_precise - v_dur_precise
+                    freeze_clip = ImageClip(last_frame).set_duration(freeze_duration).set_start(v_dur_precise)
                     
                     # ၃။ မူရင်းဗီဒီယိုနဲ့ freeze clip ကို ပေါင်းပါသည်
                     final_video = CompositeVideoClip([video_clip, freeze_clip])
+                    final_video.duration = a_dur_precise
                 else:
                     # ဗီဒီယိုက ပိုရှည်နေလျှင် အသံပြီးဆုံးချိန်မှာ ဖြတ်ပါသည်
-                    final_video = video_clip.subclip(0, audio_clip.duration)
+                    final_video = video_clip.subclip(0, a_dur_precise)
                 
                 # အသံထည့်ပါသည်
                 final_video = final_video.set_audio(audio_clip)
                 
                 output_video_path = "final_output.mp4"
+                # write_videofile လုပ်တဲ့အခါ logger=None ထည့်ပေးခြင်းဖြင့် error logs များကို ရှင်းလင်းစေပါသည်
                 final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac", fps=24, logger=None)
                 
                 # Close clips to release files
