@@ -113,34 +113,36 @@ if video_file and api_key:
                 audio_path = "narration_audio.mp3"
                 asyncio.run(generate_burmese_audio(recap_text, audio_path))
 
-                st.write("🎬 Finalizing Video & Audio Sync (Professional Mode)...")
+                st.write("🎬 Finalizing Video & Audio Sync (Frame-Perfect Mode)...")
                 
-                # Duration များကို FFprobe ဖြင့် အတိအကျ စစ်ဆေးပါသည်
-                v_dur = get_precise_duration(video_path)
+                # ၁။ ဗီဒီယိုကို အရင်ဆုံး Constant Frame Rate (24fps) အဖြစ် ပြောင်းပါသည်
+                temp_video = "temp_video.mp4"
+                subprocess.run([
+                    "ffmpeg", "-i", video_path, "-r", "24", "-c:v", "libx264", 
+                    "-pix_fmt", "yuv420p", "-preset", "ultrafast", temp_video, "-y"
+                ], check=True)
+                
+                # ၂။ Duration များကို FFprobe ဖြင့် အတိအကျ စစ်ဆေးပါသည်
+                v_dur = get_precise_duration(temp_video)
                 a_dur = get_precise_duration(audio_path)
                 output_video_path = "final_output.mp4"
                 
-                # Professional Sync Logic:
-                # ၁။ ဗီဒီယိုကို အရင်ဆုံး Constant Frame Rate (24fps) အဖြစ် ပြောင်းပါသည်
-                # ၂။ အသံရှည်နေလျှင် ဗီဒီယိုရဲ့ နောက်ဆုံး frame ကို freeze လုပ်ပါသည် (tpad filter)
-                # ၃။ အသံနဲ့ ဗီဒီယိုကို တစ်ခါတည်း (Single Pass) နဲ့ Re-encode လုပ်ပြီး ပေါင်းစပ်ပါသည်
-                
+                # ၃။ အသံရှည်နေလျှင် (Freeze Logic)
                 if a_dur > v_dur:
-                    # အသံရှည်နေလျှင် (Freeze Logic)
                     # tpad filter ကို သုံးပြီး ဗီဒီယိုရဲ့ နောက်ဆုံး frame ကို အသံပြီးဆုံးတဲ့အထိ ဆွဲဆန့်ပါသည်
+                    # setsar=1:1 ကို ထည့်သွင်းခြင်းဖြင့် aspect ratio လွဲချော်မှုကို ကာကွယ်ပါသည်
                     cmd = [
-                        "ffmpeg", "-i", video_path, "-i", audio_path,
-                        "-filter_complex", f"[0:v]fps=24,tpad=stop_mode=clone:stop_duration={a_dur-v_dur}[v]",
+                        "ffmpeg", "-i", temp_video, "-i", audio_path,
+                        "-filter_complex", f"[0:v]fps=24,tpad=stop_mode=clone:stop_duration={a_dur-v_dur},setsar=1:1[v]",
                         "-map", "[v]", "-map", "1:a",
                         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "23",
                         "-c:a", "aac", "-b:a", "128k", "-shortest", output_video_path, "-y"
                     ]
                 else:
                     # ဗီဒီယိုရှည်နေလျှင် (Trim Logic)
-                    # အသံပြီးဆုံးချိန်မှာ ဗီဒီယိုကို ဖြတ်ပါသည်
                     cmd = [
-                        "ffmpeg", "-i", video_path, "-i", audio_path,
-                        "-filter_complex", "[0:v]fps=24[v]",
+                        "ffmpeg", "-i", temp_video, "-i", audio_path,
+                        "-filter_complex", "[0:v]fps=24,setsar=1:1[v]",
                         "-map", "[v]", "-map", "1:a",
                         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "23",
                         "-c:a", "aac", "-b:a", "128k", "-t", str(a_dur), output_video_path, "-y"
@@ -176,7 +178,7 @@ if video_file and api_key:
             st.error(f"An error occurred: {e}")
         finally:
             # Safe cleanup of local files
-            temp_files = [video_path, audio_path, output_video_path]
+            temp_files = [video_path, audio_path, "temp_video.mp4", output_video_path]
             for f in temp_files:
                 if f and os.path.exists(f):
                     try: os.remove(f)
