@@ -35,7 +35,6 @@ def find_working_model():
         return 'models/gemini-1.5-flash'
 
 def get_precise_duration(file_path):
-    """FFprobe ကိုသုံးပြီး file ရဲ့ duration ကို အတိအကျ စက္ကန့်နဲ့ ရယူပါသည်"""
     try:
         cmd = [
             "ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -49,7 +48,6 @@ def get_precise_duration(file_path):
 # --- Main App ---
 video_file = st.file_uploader("📁 Upload Movie Clip:", type=["mp4", "mov", "avi"])
 
-# Initialize file paths to None to avoid NameError in finally block
 video_path = None
 audio_path = None
 output_video_path = None
@@ -94,15 +92,8 @@ if video_file and api_key:
                 (The narration text only)
                 """
                 
-                try:
-                    response = model.generate_content([gen_file, prompt])
-                    full_response = response.text
-                except Exception as e:
-                    if "429" in str(e):
-                        st.error("⚠️ Gemini API Quota ပြည့်သွားပါပြီ။ ခဏစောင့်ပြီးမှ ပြန်ကြိုးစားပေးပါ။ (သို့မဟုတ်) API Key အသစ်တစ်ခု အသုံးပြုပါ။")
-                        st.stop()
-                    else:
-                        raise e
+                response = model.generate_content([gen_file, prompt])
+                full_response = response.text
 
                 titles_match = re.search(r"\[TITLES\](.*?)\[RECAP\]", full_response, re.DOTALL)
                 recap_match = re.search(r"\[RECAP\](.*)", full_response, re.DOTALL)
@@ -113,46 +104,49 @@ if video_file and api_key:
                 audio_path = "narration_audio.mp3"
                 asyncio.run(generate_burmese_audio(recap_text, audio_path))
 
+                # ✅ NEW: Remove silence at start (IMPORTANT)
+                clean_audio = "clean_audio.mp3"
+                subprocess.run([
+                    "ffmpeg", "-i", audio_path,
+                    "-af", "silenceremove=start_periods=1:start_duration=0.1:start_threshold=-45dB",
+                    clean_audio, "-y"
+                ], check=True)
+                audio_path = clean_audio
+
                 st.write("🎬 Finalizing Video & Audio Sync (Frame-Perfect Mode)...")
                 
-                # ၁။ ဗီဒီယိုကို အရင်ဆုံး Constant Frame Rate (24fps) အဖြစ် ပြောင်းပါသည်
                 temp_video = "temp_video.mp4"
                 subprocess.run([
                     "ffmpeg", "-i", video_path, "-r", "24", "-c:v", "libx264", 
                     "-pix_fmt", "yuv420p", "-preset", "ultrafast", temp_video, "-y"
                 ], check=True)
                 
-                # ၂။ Duration များကို FFprobe ဖြင့် အတိအကျ စစ်ဆေးပါသည်
                 v_dur = get_precise_duration(temp_video)
                 a_dur = get_precise_duration(audio_path)
                 output_video_path = "final_output.mp4"
                 
-                # ၃။ အသံရှည်နေလျှင် (Freeze Logic)
                 if a_dur > v_dur:
-                    # tpad filter ကို သုံးပြီး ဗီဒီယိုရဲ့ နောက်ဆုံး frame ကို အသံပြီးဆုံးတဲ့အထိ ဆွဲဆန့်ပါသည်
-                    # setsar=1:1 ကို ထည့်သွင်းခြင်းဖြင့် aspect ratio လွဲချော်မှုကို ကာကွယ်ပါသည်
                     cmd = [
                         "ffmpeg", "-i", temp_video, "-i", audio_path,
-                        "-filter_complex", f"[0:v]fps=24,tpad=stop_mode=clone:stop_duration={a_dur-v_dur},setsar=1:1[v]",
-                        "-map", "[v]", "-map", "1:a",
+                        "-filter_complex",
+                        f"[0:v]fps=24,tpad=stop_mode=clone:stop_duration={a_dur-v_dur},setsar=1:1[v];"
+                        f"[1:a]adelay=200|200[a]",
+                        "-map", "[v]", "-map", "[a]",
                         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "23",
                         "-c:a", "aac", "-b:a", "128k", "-shortest", output_video_path, "-y"
                     ]
                 else:
-                    # ဗီဒီယိုရှည်နေလျှင် (Trim Logic)
                     cmd = [
                         "ffmpeg", "-i", temp_video, "-i", audio_path,
-                        "-filter_complex", "[0:v]fps=24,setsar=1:1[v]",
-                        "-map", "[v]", "-map", "1:a",
+                        "-filter_complex",
+                        f"[0:v]fps=24,setsar=1:1[v];"
+                        f"[1:a]adelay=200|200[a]",
+                        "-map", "[v]", "-map", "[a]",
                         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "23",
                         "-c:a", "aac", "-b:a", "128k", "-t", str(a_dur), output_video_path, "-y"
                     ]
                 
-                try:
-                    subprocess.run(cmd, check=True, capture_output=True)
-                except subprocess.CalledProcessError as e:
-                    st.error(f"FFmpeg Error: {e.stderr.decode()}")
-                    raise
+                subprocess.run(cmd, check=True)
 
                 status.update(label="✅ Complete!", state="complete")
 
@@ -163,23 +157,24 @@ if video_file and api_key:
             with col1:
                 st.subheader("📌 Social Media Titles")
                 for t in title_list[:3]:
-                    if t.strip(): st.code(t.strip(), language="text")
+                    if t.strip():
+                        st.code(t.strip(), language="text")
             
             with col2:
                 st.subheader("📥 Download")
                 with open(output_video_path, "rb") as f:
                     st.download_button("Download Final Video", f, file_name="burmese_movie_recap.mp4")
 
-            # Cleanup Gemini file
             if gen_file_name:
                 genai.delete_file(gen_file_name)
 
         except Exception as e:
             st.error(f"An error occurred: {e}")
         finally:
-            # Safe cleanup of local files
             temp_files = [video_path, audio_path, "temp_video.mp4", output_video_path]
             for f in temp_files:
                 if f and os.path.exists(f):
-                    try: os.remove(f)
-                    except: pass
+                    try:
+                        os.remove(f)
+                    except:
+                        pass
