@@ -1,130 +1,204 @@
+import sys
+import types
+# Fix for pydub error in Streamlit Cloud
+sys.modules["pyaudioop"] = types.ModuleType("pyaudioop")
+
 import streamlit as st
 import google.generativeai as genai
 import os
 import asyncio
 import edge_tts
+import tempfile
 import time
 import re
-import subprocess
+from moviepy.editor import VideoFileClip, AudioFileClip, ImageClip, concatenate_videoclips
 
-# --- CONFIG ---
-st.set_page_config(page_title="Burmese AI Movie Narrator Pro", layout="wide")
+# Page configuration
+st.set_page_config(page_title="Web (1): AI Burmese Movie Narrator Pro", layout="wide")
 
-st.title("🎬 Burmese AI Movie Narrator Pro")
+st.title("🎬 Web (1): AI Burmese Movie Narrator Pro")
+st.markdown("Video ကိုကြည့်ပြီး လူတစ်ယောက်က ဇာတ်ကြောင်းပြောပြနေသလို မြန်မာလို ရှင်းပြပေးသော AI စနစ်")
 
-# --- SIDEBAR ---
+# Sidebar for Settings
 with st.sidebar:
-    api_key = st.text_input("Enter Gemini API Key:", type="password")
-    st.markdown("[Get API Key](https://aistudio.google.com/app/apikey)")
+    st.header("Settings")
+    # API Key Input - Secure way
+    api_key = st.text_input("Enter Gemini API Key:", type="password", help="API Key ကို GitHub ပေါ် မတင်မိပါစေနဲ့။ Google က ချက်ချင်း ပိတ်လိုက်ပါလိမ့်မယ်။")
+    st.info("API Key မရှိသေးရင် VPN ဖွင့်ပြီး [Google AI Studio](https://aistudio.google.com/app/apikey) မှာ ယူပါ။")
 
-# --- SAFETY CHECK (FFmpeg) ---
-def check_ffmpeg():
-    try:
-        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        subprocess.run(["ffprobe", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return True
-    except:
-        return False
+# Input Section - Video Upload
+st.subheader("📁 Upload Video")
+video_file = st.file_uploader("Upload Video (Max 500MB):", type=["mp4", "mov", "avi"])
 
-# --- TTS ---
-async def generate_burmese_audio(text, output_path):
-    communicate = edge_tts.Communicate(
-        text,
-        "my-MM-ThihaNeural",
-        rate="-5%",
-        pitch="-2Hz"
-    )
-    await communicate.save(output_path)
-
-# --- DURATION ---
-def get_duration(file_path):
-    try:
-        cmd = [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            file_path
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        return float(result.stdout.strip())
-    except:
-        return 0.0
-
-# --- UI ---
-video_file = st.file_uploader("📁 Upload Video", type=["mp4", "mov", "avi"])
-
-if video_file and api_key:
-
-    if not check_ffmpeg():
-        st.error("❌ FFmpeg မရှိပါ (packages.txt မှာ ffmpeg ထည့်ပါ)")
-        st.stop()
-
-    genai.configure(api_key=api_key)
-
-    video_path = "input.mp4"
-    with open(video_path, "wb") as f:
-        f.write(video_file.read())
-
+video_path = None
+if video_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_video:
+        tmp_video.write(video_file.read())
+        video_path = tmp_video.name
     st.video(video_path)
 
-    if st.button("🚀 Start Process"):
+async def generate_speech(text, output_path):
+    communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural")
+    await communicate.save(output_path)
 
-        try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
+if video_path and api_key:
+    if st.button("Generate Movie Recap"):
+        with st.spinner("AI က Video ကိုကြည့်ပြီး ဇာတ်ကြောင်းပြောရန် ပြင်ဆင်နေပါတယ်..."):
+            try:
+                genai.configure(api_key=api_key)
+                
+                safety_settings = [
+                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+                ]
+                
+                # Using 2026 current models: Gemini 2.5 and 3.0 series
+                # gemini-1.5 is deprecated in 2026.
+                model_names = [
+                    "gemini-2.5-flash", 
+                    "gemini-3.0-flash", 
+                    "gemini-2.5-pro",
+                    "models/gemini-2.5-flash",
+                    "models/gemini-3.0-flash"
+                ]
+                model = None
+                model_name_used = ""
 
-            st.info("Uploading video...")
-            gen_file = genai.upload_file(video_path, mime_type="video/mp4")
+                for m_name in model_names:
+                    try:
+                        model = genai.GenerativeModel(m_name, safety_settings=safety_settings)
+                        model_name_used = m_name
+                        break 
+                    except Exception:
+                        continue
+                
+                if not model:
+                    st.error("❌ Gemini Model ကို ရှာမတွေ့ပါ။ API Key မှန်မမှန် သို့မဟုတ် Model Access ရှိမရှိ ပြန်စစ်ပေးပါ။")
+                    st.stop()
+                else:
+                    st.info(f"✅ Using Gemini Model: {model_name_used}")
+                
+                # Upload video to Gemini
+                video_file_ai = genai.upload_file(path=video_path)
+                with st.spinner("Uploading video to AI server..."):
+                    while video_file_ai.state.name == "PROCESSING":
+                        time.sleep(5)
+                        video_file_ai = genai.get_file(video_file_ai.name)
 
-            prompt = "Describe this video in Burmese narration."
+                if video_file_ai.state.name == "FAILED":
+                    st.error("Video processing failed. Please try another video.")
+                    st.stop()
 
-            response = model.generate_content([gen_file, prompt])
-            text = response.text
+                prompt = """
+                Analyze this video and provide a detailed movie recap in BURMESE language.
+                STORYTELLING STYLE:
+                - Act as a professional human movie narrator.
+                - Use natural, engaging, and emotional Burmese storytelling style.
+                - Avoid robotic or formal language.
+                OUTPUT FORMAT:
+                [TITLES]
+                Title 1
+                Title 2
+                Title 3
+                [HASHTAGS]
+                #tag1 #tag2 #tag3
+                [RECAP]
+                The detailed story...
+                """
+                
+                response = model.generate_content([video_file_ai, prompt])
+                
+                if not response.candidates:
+                    st.error("AI က ဒီ Video ကို ပိတ်ပင်ထားပါတယ် (Blocked)။")
+                else:
+                    full_text = response.text
+                    
+                    # Robust content parsing
+                    titles_part = ""
+                    hashtags_part = ""
+                    recap_part = ""
+                    
+                    if "[TITLES]" in full_text:
+                        parts = full_text.split("[TITLES]")
+                        if len(parts) > 1:
+                            subparts = parts[1].split("[HASHTAGS]")
+                            titles_part = subparts[0].strip()
+                            if len(subparts) > 1:
+                                recap_split = subparts[1].split("[RECAP]")
+                                hashtags_part = recap_split[0].strip()
+                                if len(recap_split) > 1:
+                                    recap_part = recap_split[1].strip()
+                    
+                    if not recap_part:
+                        recap_part = full_text # Fallback
+                    
+                    st.success("✨ Social Media Ready Content!")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.subheader("📌 Catchy Titles")
+                        if titles_part:
+                            titles = titles_part.split('\n')
+                            for t in titles[:3]: 
+                                if t.strip(): st.code(t.strip())
+                    with col2:
+                        st.subheader("🔥 Trending Hashtags")
+                        if hashtags_part: 
+                            st.code(hashtags_part.strip())
+                    
+                    st.subheader("📝 Full Recap Script:")
+                    st.write(recap_part)
+                    
+                    # Generate Burmese Audio
+                    with st.spinner("Generating Burmese narration audio..."):
+                        audio_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
+                        asyncio.run(generate_speech(recap_part, audio_path))
+                    
+                    # Process Video with MoviePy
+                    with st.spinner("Combining video and audio... (This may take a few minutes)"):
+                        video_clip = VideoFileClip(video_path)
+                        audio_clip = AudioFileClip(audio_path)
+                        
+                        # Mute original video
+                        video_muted = video_clip.without_audio()
+                        
+                        # Handle duration mismatch
+                        if audio_clip.duration > video_muted.duration:
+                            # Freeze last frame if audio is longer
+                            last_frame = video_muted.get_frame(video_muted.duration - 0.1)
+                            freeze_frame = ImageClip(last_frame).set_duration(audio_clip.duration - video_muted.duration)
+                            video_final = concatenate_videoclips([video_muted, freeze_frame])
+                        else:
+                            # Trim video if audio is shorter
+                            video_final = video_muted.subclip(0, audio_clip.duration)
+                        
+                        # Set audio
+                        final_video = video_final.set_audio(audio_clip)
+                        output_video_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
+                        final_video.write_videofile(output_video_path, codec="libx264", audio_codec="aac", fps=24)
+                    
+                    st.success("✅ Video Processing Complete!")
+                    st.video(output_video_path)
+                    with open(output_video_path, "rb") as f:
+                        st.download_button("⬇️ Download Final Video (MP4)", f, "my_movie_recap.mp4", "video/mp4")
+                    
+                    # Clean up
+                    video_clip.close()
+                    audio_clip.close()
+                    if os.path.exists(audio_path): os.remove(audio_path)
+                    if os.path.exists(output_video_path): os.remove(output_video_path)
+                
+                # Delete uploaded file from Gemini
+                genai.delete_file(video_file_ai.name)
+                
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
+                import traceback
+                st.error(traceback.format_exc())
+            finally:
+                if video_path and os.path.exists(video_path):
+                    os.remove(video_path)
 
-            audio_path = "audio.mp3"
-            asyncio.run(generate_burmese_audio(text, audio_path))
-
-            # --- convert video ---
-            temp_video = "temp.mp4"
-            subprocess.run([
-                "ffmpeg", "-i", video_path, "-r", "24",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                temp_video, "-y"
-            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-            v_dur = get_duration(temp_video)
-            a_dur = get_duration(audio_path)
-
-            output = "final.mp4"
-
-            if a_dur > v_dur:
-                filter_cmd = (
-                    f"[0:v]fps=24,tpad=stop_mode=clone:stop_duration={a_dur-v_dur},setsar=1:1[v];"
-                    f"[1:a]atrim=start=0,asetpts=PTS-STARTPTS[a]"
-                )
-                t = None
-            else:
-                filter_cmd = "[0:v]fps=24,setsar=1:1[v];[1:a]atrim=start=0,asetpts=PTS-STARTPTS[a]"
-                t = str(a_dur)
-
-            cmd = ["ffmpeg", "-i", temp_video, "-i", audio_path,
-                   "-filter_complex", filter_cmd,
-                   "-map", "[v]", "-map", "[a]",
-                   "-c:v", "libx264", "-c:a", "aac",
-                   output, "-y"]
-
-            if t:
-                cmd.insert(-1, "-t")
-                cmd.insert(-1, t)
-
-            result = subprocess.run(cmd, capture_output=True, text=True)
-
-            if result.returncode != 0:
-                st.error(result.stderr)
-                st.stop()
-
-            st.success("✅ Done")
-
-            st.video(output)
-
-        except Exception as e:
-            st.error(f"Error: {str(e)}")
+elif not api_key and video_path:
+    st.warning("⚠️ Please enter your API Key in the sidebar.")
